@@ -1,0 +1,21 @@
+{
+    "challenge_module": "Challenge.Instances.SHA256.Challenge",
+    "solution_module": "Solution.SHA256.Main",
+    "theorem_names": [
+        "Solution.SHA256.soundness",
+        "Solution.SHA256.completeness",
+        "Solution.SHA256.mainCost",
+        "Solution.SHA256.isR1CS"
+    ],
+    "definition_names": [
+        "Solution.SHA256.main",
+        "Solution.SHA256.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice",
+        "Challenge.Instances.SHA256.Interface.hCircomPrime"
+    ],
+    "enable_nanoda": false
+}

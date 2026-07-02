@@ -1,0 +1,38 @@
+name: Build Lean project
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-lean-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Lean project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: Build with Lake
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          auto-config: false
+          lake-package-directory: .
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: true
+          use-github-cache: true
+
+      - name: Build public Lean project
+        run: |
+          lake exe cache get
+          lake build Challenge Solution

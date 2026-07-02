@@ -1,0 +1,124 @@
+# Generated public challenge registry. Do not edit by hand.
+
+assert-bytes:
+  type: public
+  instance: AssertBytes
+  config: configs/AssertBytes.json
+  cost: Challenge/Instances/AssertBytes/Cost.lean
+  namespace: Solution.AssertBytes
+  files:
+  - configs/AssertBytes.json
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/AssertBytes
+  - Solution/AssertBytes
+  content:
+    title: Hello, World!
+    description: "# Byte Array Assertion\nThis challenge is meant to be an introduction\
+      \ to zkGolf: your goal is to build\na circuit that accepts an array of 16 field\
+      \ elements and asserts that every element is a byte.\n\n## Interface\n\n```lean\n\
+      @[reducible] def bufferLen : \u2115 := 16\n\nstructure Input (F : Type) where\n\
+      \  buffer : Vector F bufferLen\n\n@[reducible] def Output : TypeMap := unit\n\
+      ```\n\nThere are no public-input assumptions.\nThe circuit must guarantee that\
+      \ every element in the buffer is less than 256.\n\n```lean\ndef Spec (input\
+      \ : Input (F circomPrime))\n    (_output : Output (F circomPrime))\n    (_data\
+      \ : ProverData (F circomPrime)) : Prop :=\n  \u2200 i : Fin bufferLen, (input.buffer[i.val]'i.isLt).val\
+      \ < 256\n```\n\n**Note:** we do not expect anyone to improve the baseline circuit,\
+      \ but you can use\nthis challenge to test your setup.\n"
+    tags:
+    - hello-world
+  baseline:
+    allocations: 128
+    constraints: 144
+sha256-hash:
+  type: public
+  instance: SHA256
+  config: configs/SHA256.json
+  cost: Challenge/Instances/SHA256/Cost.lean
+  namespace: Solution.SHA256
+  files:
+  - configs/SHA256.json
+  - Challenge/Specs/SHA256.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/SHA256
+  - Solution/SHA256
+  - Tests/SHA256.lean
+  content:
+    title: SHA-256
+    description: "# SHA-256 Digest\nYour goal is to build a circuit that accepts a\
+      \ message of up to 256 bytes and\noutputs its SHA-256 digest.\n\n## Interface\n\
+      \n```lean\n@[reducible] def inputBufferLen : \u2115 := 256\n\nstructure Input\
+      \ (F : Type) where\n  message : Vector F inputBufferLen\n  messageLen : F\n\n\
+      structure Output (F : Type) where\n  digest : Vector F 8\n```\n\nThe input is\
+      \ a fixed-size buffer of field elements, together with the\nlength of the message\
+      \ prefix that should be hashed. The SHA-256 must be computed\non the input slice\
+      \ starting from position 0 with size `messageLen`.\nThe output is an array of\
+      \ 8 field elements, each representing one\n32-bit word of the digest.\n\nThe\
+      \ input assumptions say that every element of the message buffer\nis a byte\
+      \ and that `messageLen` is strictly less than the buffer length.\nThese properties\
+      \ are assumed to be checked elsewhere (e.g., by the caller of the\ncircuit)\
+      \ and do not have to be enforced by the circuit itself.\n\n```lean\ndef Assumptions\
+      \ {bufferLen : \u2115}\n    (input : Vector \u2115 bufferLen)\n    (len : \u2115\
+      ) : Prop :=\n  IsByteArray input \u2227 len < bufferLen\n```\n\nThe circuit\
+      \ must guarantee that the output is the SHA-256 hash of the\nfirst `messageLen`\
+      \ bytes of the input buffer.\n\n```lean\ndef Spec {bufferLen : \u2115}\n   \
+      \ (input : Vector \u2115 bufferLen) (len : \u2115)\n    (output : Vector \u2115\
+      \ 8) : Prop :=\n  if h : len \u2264 bufferLen then\n    let truncated := truncate\
+      \ input len h\n    output = sha256 truncated\n  else\n    False\n```\n"
+    tags:
+    - hash
+    - sha256
+  baseline:
+    allocations: 204216
+    constraints: 207538
+rsa-pkcs1v15-sha256-4096-65537:
+  type: public
+  instance: RSASSAPKCS1v15_SHA256_4096_65537
+  config: configs/RSASSAPKCS1v15_SHA256_4096_65537.json
+  cost: Challenge/Instances/RSASSAPKCS1v15_SHA256_4096_65537/Cost.lean
+  namespace: Solution.RSASSAPKCS1v15_SHA256_4096_65537
+  files:
+  - configs/RSASSAPKCS1v15_SHA256_4096_65537.json
+  - Challenge/Specs/RSASSAPKCS1v15.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/RSASSAPKCS1v15_SHA256_4096_65537
+  - Solution/RSASSAPKCS1v15_SHA256_4096_65537
+  - Tests/RSA2048.lean
+  content:
+    title: RSA Signature Verification
+    description: "# RSA-4096 PKCS#1 v1.5 SHA-256 Verification\nYour goal is to build\
+      \ a circuit that verifies an RSASSA-PKCS1-v1_5\nsignature over a SHA-256 digest,\
+      \ using a 4096-bit RSA modulus and public\nexponent `65537`.\n\n## Interface\n\
+      \n```lean\n@[reducible] def modulusBytesLen : \u2115 :=\n  Specs.RSASSAPKCS1v15_SHA256_4096_65537.modulusBytesLen\n\
+      \n@[reducible] def digestBytesLen : \u2115 :=\n  Specs.RSASSAPKCS1v15.HashAlgorithm.sha256.digestLength\n\
+      \nstructure Input (F : Type) where\n  modulus : Vector F modulusBytesLen\n \
+      \ digest : Vector F digestBytesLen\n  signature : Vector F modulusBytesLen\n\
+      \nabbrev Output : TypeMap := unit\n```\n\nThe public inputs are byte strings\
+      \ encoded as field elements: the\nbig-endian RSA modulus `N`, the 32-byte SHA-256\
+      \ digest, and the big-endian\nRSA signature `S`.\n\nThe assumptions say that\
+      \ all three vectors are valid byte arrays, and that\nthe representative integer\
+      \ of the modulus has exactly 4096 bits.\nThese properties are assumed to be\
+      \ checked elsewhere (e.g., by the caller\nof the circuit) and do not have to\
+      \ be enforced by the circuit itself.\n\n```lean\ndef Assumptions {modulusBytesLen\
+      \ : \u2115} (alg : HashAlgorithm)\n    (n : Vector \u2115 modulusBytesLen)\n\
+      \    (h : Vector \u2115 alg.digestLength)\n    (signature : Vector \u2115 modulusBytesLen)\
+      \ : Prop :=\n  IsOctetString n \u2227\n  IsOctetString h \u2227\n  IsOctetString\
+      \ signature \u2227\n  HasBitSize (os2ip n) (modulusBytesLen * 8)\n```\n\nThe\
+      \ circuit must guarantee that RFC 8017 signature verification succeeds:\nrecover\
+      \ `S^65537 mod N`, encode it as a 4096-bit octet string, and compare\nit with\
+      \ the EMSA-PKCS1-v1_5 encoding of the supplied SHA-256 digest.\n\n```lean\n\
+      def verifySignature {modulusBytesLen : \u2115} (alg : HashAlgorithm) (e : \u2115\
+      )\n    (n : Vector \u2115 modulusBytesLen)\n    (h : Vector \u2115 alg.digestLength)\n\
+      \    (signature : Vector \u2115 modulusBytesLen) : Bool :=\n  let n := os2ip\
+      \ n\n  let signature := os2ip signature\n  let recovered := rsavp1? n e signature\n\
+      \  let expected := emsaPkcs1v15Encode? alg h modulusBytesLen\n  match recovered,\
+      \ expected with\n  | some r, some e => i2osp r modulusBytesLen == some e\n \
+      \ | _, _ => false\n```\n\nThe concrete instance fixes SHA-256 as the hash algorithm\
+      \ and `65537` as\nthe public exponent.\n\n```lean\n@[reducible] def publicExponent\
+      \ := 65537\n\ndef Spec :=\n  Specs.RSASSAPKCS1v15.Spec\n    (modulusBytesLen\
+      \ := modulusBytesLen)\n    algorithm\n    publicExponent\n```\n"
+    tags:
+    - rsa
+    - signature
+  baseline:
+    allocations: 412130
+    constraints: 415006
