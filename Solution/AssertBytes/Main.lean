@@ -52,22 +52,23 @@ attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperat
 @[reducible] def allocations : Nat := 128
 @[reducible] def constraints : Nat := 144
 
-theorem affineW_input_buffer :
-    AffineW ((varFromOffset Input 0 : Var Input (F circomPrime)).buffer) := by
-  have heq : (varFromOffset Input 0 : Var Input (F circomPrime)).buffer
-      = varFromOffset (fields bufferLen) 0 := by simp only [circuit_norm]
-  rw [heq]; exact affineW_varFromOffset _ _
+theorem affineW_input_buffer (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    AffineW input.buffer := by
+  intro i hi
+  simpa [AffineProvable] using hinput i hi
 
 theorem mainCost :
-    circuitCount (main default) = ⟨allocations, constraints⟩ :=
-  circuitCount_eq_of_CostIs
-    (show CostIs (main default) ⟨allocations, constraints⟩ from
-      CostIs.forEach (fun a n => costIs_assertion_num2Bits 8 a n))
+    circuitCost main ⟨allocations, constraints⟩ :=
+  fun input =>
+    show CostIs (main input) ⟨allocations, constraints⟩ from
+      CostIs.forEach (fun a n => costIs_assertion_num2Bits 8 a n)
 
 theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   isR1CS_of_IsR1CSCirc
+  (fun input hinput =>
     (IsR1CSCirc.forEach_mem (α := Expression (F circomPrime))
-      fun i n => isR1CS_assertion_num2Bits 8 _ (affineW_input_buffer i.val i.isLt) n)
+      fun i n => isR1CS_assertion_num2Bits 8 _ (affineW_input_buffer input hinput i.val i.isLt) n))
+  (fun _ _ => affineOutput_unit _)
 
 end
 

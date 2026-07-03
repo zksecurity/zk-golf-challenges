@@ -942,25 +942,44 @@ theorem isR1CS_sub_padDigest (digest : Var (fields digestBytesLen) (F circomPrim
     (hdigest : AffineW digest) : IsR1CSCirc (subcircuit PadDigest.circuit digest) :=
   IsR1CSCirc.subcircuit (fun n => isR1CS_padDigest digest hdigest n)
 
-/-- The `modulus` slice of the offset-0 input allocation is a `varFromOffset`. -/
-theorem affineW_input_modulus :
-    AffineW (varFromOffset Input 0 : Var Input (F circomPrime)).modulus := by
-  have h : (varFromOffset Input 0 : Var Input (F circomPrime)).modulus
-      = varFromOffset (fields modulusBytesLen) 0 := by simp only [circuit_norm]
-  rw [h]; exact affineW_varFromOffset _ _
+/-- The `modulus` slice of any affine symbolic input is affine. -/
+theorem affineW_input_modulus (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    AffineW input.modulus := by
+  have hsz : size Input = modulusBytesLen + (digestBytesLen + modulusBytesLen) := rfl
+  have hflat : AffineW
+      (input.modulus ++ (input.digest ++ input.signature) :
+        fields (modulusBytesLen + (digestBytesLen + modulusBytesLen)) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  exact AffineW.left_of_append hflat
 
-theorem affineW_input_signature :
-    AffineW (varFromOffset Input 0 : Var Input (F circomPrime)).signature := by
-  have h : (varFromOffset Input 0 : Var Input (F circomPrime)).signature
-      = varFromOffset (fields modulusBytesLen) (modulusBytesLen + digestBytesLen) := by
-    simp only [circuit_norm]
-  rw [h]; exact affineW_varFromOffset _ _
+theorem affineW_input_digest (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    AffineW input.digest := by
+  have hsz : size Input = modulusBytesLen + (digestBytesLen + modulusBytesLen) := rfl
+  have hflat : AffineW
+      (input.modulus ++ (input.digest ++ input.signature) :
+        fields (modulusBytesLen + (digestBytesLen + modulusBytesLen)) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  have htail : AffineW
+      (input.digest ++ input.signature :
+        fields (digestBytesLen + modulusBytesLen) (Expression (F circomPrime))) :=
+    AffineW.right_of_append hflat
+  exact AffineW.left_of_append htail
 
-theorem affineW_input_digest :
-    AffineW (varFromOffset Input 0 : Var Input (F circomPrime)).digest := by
-  have h : (varFromOffset Input 0 : Var Input (F circomPrime)).digest
-      = varFromOffset (fields digestBytesLen) modulusBytesLen := by simp only [circuit_norm]
-  rw [h]; exact affineW_varFromOffset _ _
+theorem affineW_input_signature (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    AffineW input.signature := by
+  have hsz : size Input = modulusBytesLen + (digestBytesLen + modulusBytesLen) := rfl
+  have hflat : AffineW
+      (input.modulus ++ (input.digest ++ input.signature) :
+        fields (modulusBytesLen + (digestBytesLen + modulusBytesLen)) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  have htail : AffineW
+      (input.digest ++ input.signature :
+        fields (digestBytesLen + modulusBytesLen) (Expression (F circomPrime))) :=
+    AffineW.right_of_append hflat
+  exact AffineW.right_of_append htail
 
 end GadgetCost
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537

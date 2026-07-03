@@ -43,6 +43,9 @@ def degree : Expression F → ℕ
   | .add a b => max (degree a) (degree b)
   | .mul a b => degree a + degree b
 
+/-- An expression is *affine* if its structural degree is at most 1. -/
+def Affine (e : Expression F) : Prop := degree e ≤ 1
+
 /-- Number of genuine degree-2 product terms along the top-level `add` spine, or
 `none` if some summand is not a valid R1CS term. The `add` spine sums the counts,
 so `a*b + c*d` reports `2`.
@@ -103,19 +106,6 @@ def operationsIsR1CS [Field F] : Operations F → Prop
 /-- A circuit is single-row R1CS iff its operations (at offset 0) are. -/
 def isR1CSCircuit {α : Type} [Field F] (c : Circuit F α) (offset : ℕ := 0) : Prop :=
   operationsIsR1CS (Circuit.operations c offset)
-
-/-- A circuit *family* (the `main` of a formal circuit) is single-row R1CS when,
-allocating its inputs as *variables* at offset 0, and then instantiating the
-circuit after the input allocation.
-
-Allocating the inputs as variables — rather than checking `main default`, whose
-constant inputs have degree 0 — is what makes a constraint that mentions an input
-count as the rank-1 product it really is. The chosen offset is immaterial:
-`isR1CSRow` inspects only the *degree* of subexpressions (`var` = 1, `const` = 0),
-never variable indices, so any input/operation offset yields the same `Prop`. -/
-def isR1CS {Input : TypeMap} {α : Type} [Field F] [ProvableType Input]
-    (main : Var Input F → Circuit F α) : Prop :=
-  isR1CSCircuit (main (varFromOffset Input 0)) (size Input)
 
 /-! ## Counting allocations and constraints (assuming R1CS form) -/
 
@@ -310,6 +300,13 @@ theorem operationCount_flatten_ofFn_const {m : ℕ} (g : Fin m → Operations F)
 /-- `c` produces exactly `K` allocations/constraints at every offset. -/
 def CostIs (c : Circuit F α) (K : Count) : Prop :=
   ∀ n, operationCount (c.operations n) = K
+
+/-- A circuit family has fixed cost when every symbolic input instantiation has
+the same offset-independent operation count. This is the proposition the trusted
+challenge `mainCost` statements should expose. -/
+def circuitCost {Input : TypeMap} [ProvableType Input]
+    (main : Var Input F → Circuit F α) (K : Count) : Prop :=
+  ∀ input : Var Input F, CostIs (main input) K
 
 theorem CostIs.pure (a : α) : CostIs (pure a : Circuit F α) Count.zero := by
   intro n; rw [Circuit.pure_operations_eq]; rfl
@@ -552,15 +549,6 @@ offset-0 statement. -/
 theorem isR1CSCircuit_of_IsR1CSCirc {c : Circuit F α} (h : IsR1CSCirc c) :
     isR1CSCircuit c := h 0
 
-/-- Bridge to the circuit-family `isR1CS`: it suffices to certify the circuit
-obtained by allocating the inputs at offset 0. `IsR1CSCirc` holds at every
-offset, so we instantiate it at `size Input` — the offset at which `main`'s own
-operations begin, after the `size Input` input cells. -/
-theorem isR1CS_of_IsR1CSCirc {Input : TypeMap} [ProvableType Input]
-    {main : Var Input F → Circuit F α}
-    (h : IsR1CSCirc (main (varFromOffset Input 0))) : isR1CS main :=
-  h (size Input)
-
 /-! ## Affine expressions and per-assert R1CS certificates
 
 `Affine e` means `e` has structural degree ≤ 1 (no genuine degree-2 product).
@@ -570,9 +558,6 @@ field-scaled combinations of them — are affine, and affineness propagates thro
 `C + A*B`, or `A*B` from affine `A, B, C` is then a single R1CS row — exactly the
 `isR1CSRow e` hypothesis that `IsR1CSCirc.assertZero` consumes. These are the
 reusable leaves used to discharge the per-assert obligations of any gadget. -/
-
-/-- An expression is *affine* if its structural degree is at most 1. -/
-def Affine (e : Expression F) : Prop := degree e ≤ 1
 
 omit [Field F] in
 @[simp] theorem degree_var (v : Variable F) : degree (Expression.var v) = 1 := rfl
@@ -732,9 +717,86 @@ theorem isR1CSRow_mul {A B : Expression F} (hA : Affine A) (hB : Affine B) :
 
 /-! ### Affineness of witness vectors and symbolic inputs -/
 
+/-- Every flattened element of a symbolic circuit value is affine. This is the
+right precondition for R1CS certification over arbitrary symbolic inputs, and the
+right postcondition for circuit outputs: constants, variables, and linear forms
+are accepted; quadratic expressions are not. -/
+def AffineProvable {Input : TypeMap} [ProvableType Input] (input : Var Input F) : Prop :=
+  ∀ i (hi : i < size Input),
+    Affine ((toElements (M := Input) input)[i])
+
+/-- The output of a circuit is affine at every offset. A circuit that returns a
+nonlinear expression without constraining/witnessing it is not an R1CS circuit,
+even if its operation list is empty. -/
+def AffineOutput {Output : TypeMap} [ProvableType Output]
+    (c : Circuit F (Var Output F)) : Prop :=
+  ∀ n, AffineProvable (c.output n)
+
+/-- A circuit family (the `main` of a formal circuit) is single-row R1CS when
+every affine symbolic input instantiation has offset-independent single-row R1CS
+operations and affine outputs. -/
+def isR1CS {Input Output : TypeMap} [ProvableType Input] [ProvableType Output]
+    (main : Var Input F → Circuit F (Var Output F)) : Prop :=
+  ∀ input : Var Input F, AffineProvable input → IsR1CSCirc (main input) ∧ AffineOutput (main input)
+
+theorem isR1CS_of_IsR1CSCirc {Input Output : TypeMap} [ProvableType Input]
+    [ProvableType Output] {main : Var Input F → Circuit F (Var Output F)}
+    (hops : ∀ input : Var Input F, AffineProvable input → IsR1CSCirc (main input))
+    (hout : ∀ input : Var Input F, AffineProvable input → AffineOutput (main input)) :
+    isR1CS main :=
+  fun input hinput => ⟨hops input hinput, hout input hinput⟩
+
 /-- Every entry of a `fields m` variable vector is affine (degree ≤ 1). All the
 witness rows and symbolic inputs of arithmetic circuits satisfy this. -/
 def AffineW {m : ℕ} (v : Var (fields m) F) : Prop := ∀ i (hi : i < m), Affine v[i]
+
+omit [Field F] in
+theorem AffineProvable.affineW {m : ℕ} {v : Var (fields m) F} (h : AffineProvable v) :
+    AffineW v := by
+  intro i hi
+  simpa [AffineProvable, circuit_norm, explicit_provable_type] using h i hi
+
+omit [Field F] in
+theorem AffineW.affineProvable {m : ℕ} {v : Var (fields m) F} (h : AffineW v) :
+    AffineProvable v := by
+  intro i hi
+  simpa [AffineProvable, circuit_norm, explicit_provable_type] using h i hi
+
+omit [Field F] in
+theorem affineProvable_unit (u : Var unit F) : AffineProvable u := by
+  intro i hi
+  have hsz : size unit = 0 := rfl
+  have : False := by omega
+  exact False.elim this
+
+theorem affineOutput_unit (c : Circuit F (Var unit F)) : AffineOutput c :=
+  fun _ => affineProvable_unit _
+
+theorem affineOutput_of_affineW {m : ℕ} {c : Circuit F (Var (fields m) F)}
+    (h : ∀ n, AffineW (c.output n)) : AffineOutput c :=
+  fun n => (h n).affineProvable
+
+omit [Field F] in
+theorem AffineW.left_of_append {m n : ℕ}
+    {a : fields m (Expression F)} {b : fields n (Expression F)}
+    (h : AffineW (a ++ b : fields (m + n) (Expression F))) : AffineW a := by
+  intro i hi
+  have h' := h i (by omega)
+  rw [Vector.getElem_append] at h'
+  split at h'
+  · exact h'
+  · omega
+
+omit [Field F] in
+theorem AffineW.right_of_append {m n : ℕ}
+    {a : fields m (Expression F)} {b : fields n (Expression F)}
+    (h : AffineW (a ++ b : fields (m + n) (Expression F))) : AffineW b := by
+  intro i hi
+  have h' := h (m + i) (by omega)
+  rw [Vector.getElem_append] at h'
+  split at h'
+  · omega
+  · simpa [Nat.add_sub_cancel_left] using h'
 
 /-- Every entry of a `fields m` variable vector is a *constant* (degree 0). -/
 def ConstW {m : ℕ} (v : Var (fields m) F) : Prop := ∀ i (hi : i < m), degree v[i] = 0
@@ -759,6 +821,16 @@ omit [Field F] in
 theorem affineW_varFromOffset (m n : ℕ) :
     AffineW (varFromOffset (fields m) n : Var (fields m) F) :=
   fun i hi => affine_varFromOffset m n i hi
+
+omit [Field F] in
+theorem affineProvable_varFromOffset {Input : TypeMap} [ProvableType Input] (offset : ℕ) :
+    AffineProvable (varFromOffset Input offset : Var Input F) := by
+  intro i hi
+  rw [show (toElements (M := Input)
+        (varFromOffset Input offset : Var Input F))[i] =
+        Expression.var ⟨offset + i⟩ from by
+    simp only [varFromOffset, ProvableType.toElements_fromElements, Vector.getElem_mapRange]]
+  exact Affine.var _
 
 theorem affine_witnessField_output (c : ProverEnvironment F → F) (n : ℕ) :
     Affine ((Circuit.witnessField c).output n) := Affine.var _

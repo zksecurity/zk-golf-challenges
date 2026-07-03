@@ -117,7 +117,7 @@ theorem soundness :
   rw [Specs.SHA256.Spec, dif_pos (le_of_lt h_len_assum)]
   apply Vector.ext
   intro w hw
-  simp only [fieldElemsToNat, Vector.getElem_map]
+  simp only [fieldElemsToNat, Vector.getElem_map, Vector.getElem_mapRange, Expression.eval]
   rw [h_sd_spec ⟨w, hw⟩]
   refine digest_final _ msg ℓ (le_of_lt h_len_assum) (fun k => ?_) ⟨w, hw⟩ hw
   fin_cases k
@@ -284,11 +284,12 @@ The per-gadget cost / R1CS leaves live in `Cost.lean`; here we just assemble
 `main`'s total count and its single-row R1CS certificate by structural recursion
 over `main`'s own `do`-block (no `native_decide`, no `decide`). -/
 
-@[reducible] def allocations : Nat := 204216
-@[reducible] def constraints : Nat := 207538
+@[reducible] def allocations : Nat := 204224
+@[reducible] def constraints : Nat := 209586
 
 theorem mainCost :
-    circuitCount (main default) = ⟨allocations, constraints⟩ :=
+    circuitCost main ⟨allocations, constraints⟩ :=
+  fun input =>
   (CostIs.bind (CostIs.witnessVector paddedBitsLen _) fun _ =>
     CostIs.bind (CostIs.witnessVector inputBufferLen _) fun _ =>
     CostIs.bind (Cost.costIs_sub_checkPad _) fun _ =>
@@ -299,28 +300,29 @@ theorem mainCost :
     CostIs.bind (Cost.costIs_sub_compressBlock _) fun _ =>
     CostIs.bind (Cost.costIs_sub_selectDigest _) fun _ =>
     CostIs.pure _
-      : CostIs (main default) ⟨allocations, constraints⟩) 0
+      : CostIs (main input) ⟨allocations, constraints⟩)
 
 /-- Structural single-row R1CS certificate for the circuit *family* `main`,
-allocating the inputs as variables at offset 0 (as `isR1CS` requires). Each assert
-is an affine combination (or `A·B`/`A·B−C` of affine forms), threaded through the
-symbolic (affine) message + length inputs and the witnessed (affine) padded bits,
-length flags and compress-block outputs. -/
+for every affine symbolic input. Each assert is an affine combination (or
+`A·B`/`A·B−C` of affine forms), threaded through the affine message + length
+inputs and the witnessed affine padded bits, length flags and compress-block
+outputs. -/
 theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
-  isR1CS_of_IsR1CSCirc (by
+  isR1CS_of_IsR1CSCirc
+  (fun input hinput => by
     refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector paddedBitsLen _) fun npad => ?_
     refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector inputBufferLen _) fun nflags => ?_
     have hpadded : AffineW
         ((Circuit.witnessVector paddedBitsLen
-          (paddedBitsWitness (varFromOffset Input 0))).output npad) :=
+          (paddedBitsWitness input)).output npad) :=
       affineW_witnessVector_output _ _ _
     have hflags : AffineW
         ((Circuit.witnessVector inputBufferLen
-          (lenFlagsWitness (varFromOffset Input 0))).output nflags) :=
+          (lenFlagsWitness input)).output nflags) :=
       affineW_witnessVector_output _ _ _
     refine IsR1CSCirc.bind
-      (Cost.r1cs_sub_checkPad _ Cost.affine_input_messageLen Cost.affineW_input_message
-        hflags hpadded) fun _ => ?_
+      (Cost.r1cs_sub_checkPad _ (Cost.affine_input_messageLen input hinput)
+        (Cost.affineW_input_message input hinput) hflags hpadded) fun _ => ?_
     refine IsR1CSCirc.bind_out
       (Cost.r1cs_sub_compressBlock _ Cost.affineW_state0
         (Cost.affineW_paddedBlock _ hpadded 0)) fun n1 => ?_
@@ -333,11 +335,33 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
     refine IsR1CSCirc.bind_out
       (Cost.r1cs_sub_compressBlock _ (Cost.affineW_subOut_compressBlock _ n3)
         (Cost.affineW_paddedBlock _ hpadded 3)) fun n4 => ?_
-    refine IsR1CSCirc.bind
+    refine IsR1CSCirc.bind_out
       (Cost.r1cs_sub_compressBlock _ (Cost.affineW_subOut_compressBlock _ n4)
-        (Cost.affineW_paddedBlock _ hpadded 4)) fun _ => ?_
-    refine IsR1CSCirc.bind (Cost.r1cs_selectDigest _) fun _ => ?_
+        (Cost.affineW_paddedBlock _ hpadded 4)) fun n5 => ?_
+    refine IsR1CSCirc.bind (Cost.r1cs_selectDigest _ hflags ?_) fun _ => ?_
+    · intro k hk j hj
+      have hpad : paddedBlocksLen = 5 := rfl
+      rcases (by omega : k = 0 ∨ k = 1 ∨ k = 2 ∨ k = 3 ∨ k = 4) with
+        rfl | rfl | rfl | rfl | rfl
+      · simp [SelectDigest.statesVec]
+        exact Cost.affineW_subOut_compressBlock _ n1 j hj
+      · simp [SelectDigest.statesVec]
+        exact Cost.affineW_subOut_compressBlock _ n2 j hj
+      · simp [SelectDigest.statesVec]
+        exact Cost.affineW_subOut_compressBlock _ n3 j hj
+      · simp [SelectDigest.statesVec]
+        exact Cost.affineW_subOut_compressBlock _ n4 j hj
+      · simp [SelectDigest.statesVec]
+        exact Cost.affineW_subOut_compressBlock _ n5 j hj
     exact IsR1CSCirc.pure _)
+  (fun input hinput n => by
+    intro i hi
+    have hi8 : i < 8 := by
+      have hsz : size Output = 8 := rfl
+      omega
+    change Affine (((main input).output n).digest[i])
+    simp only [main, Circuit.bind_output_eq, Circuit.pure_output_eq]
+    exact Cost.affineW_subOut_selectDigest _ _ i hi8)
 
 end
 

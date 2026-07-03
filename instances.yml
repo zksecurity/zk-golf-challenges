@@ -68,8 +68,56 @@ sha256-hash:
     - hash
     - sha256
   baseline:
-    allocations: 204216
-    constraints: 207538
+    allocations: 204224
+    constraints: 209586
+  comparison_points:
+  - name: zk-email
+    score: 313655
+    caveats: "This estimate is taken from the `Sha256Bytes(320)` template of zk-email.\n\
+      It is a dynamic-length, 5-block SHA-256 circuit for a 320-bytes pre-padded buffer.\n\
+      It is the most direct comparison to the challenge interface.\n\nThe cost is\
+      \ 155885 allocations and 157770 constraints, when compiled with circom using\
+      \ `--O2`.\n\nThe main interface differences between the challenge and `Sha256Bytes(320)`\
+      \ are:\n- The challenge requires the circuit to enforce the correct padding\
+      \ of the input message, while\n  `Sha256Bytes(320)` takes a pre-padded buffer\
+      \ in input, and assumes that the padding is correct.\n- The `Sha256Bytes(320)`\
+      \ circuit enforces internally that the input message is composed of bytes, while\
+      \ the\n  challenge assumes that the input is a valid byte array and does not\
+      \ enforce it.\n- The `Sha256Bytes(320)` circuit additionally enforces that the\
+      \ bytes after the padded length are zero, while\n  the challenge does not enforce\
+      \ this property, but simply ignores the bytes after the padded length.\n- The\
+      \ `Sha256Bytes(320)` circuit enforces that the padded length is in bounds, while\
+      \ the challenge assumes it.\n- In this estimate we are counting the allocation\
+      \ of the input variables, while in the challenge we\n  are not counting them,\
+      \ since they are allocated by the caller.\n  This underestimates the challenge\
+      \ cost by 321 allocations.\n"
+  - name: circomlib
+    score: 305565
+    caveats: "Since circomlib does not provide a direct implementation of the full\
+      \ SHA-256 function with dynamic length,\n**this estimate is a rough lower bound**\
+      \ obtained by multiplying the cost of the circomlib's\n`Sha256compression()`\
+      \ template by 5.\n\nEach compression costs 30328 allocations and 30785 constraints,\
+      \ when compiled with circom using `--O2`.\n\nA few caveats to consider:\n- The\
+      \ challenge is requiring the circuit to enforce the correct padding of the input\
+      \ message, while this\n  estimate only considers compressions.\n- We are counting\
+      \ allocations for the input variables, while in the challenge score we are not\
+      \ counting them,\n  since they are allocated by the caller. This slightly underestimates\
+      \ the challenge cost.\n- We are slightly overestimating the allocations by multiplying\
+      \ the raw compression cost by 5,\n  since in a MD compression chan, internal\
+      \ state variables would be reused between compressions.\n"
+  - name: xJsnark
+    score: 255380
+    caveats: "This estimate is a rough lower bound obtained by multiplying the published\
+      \ cost of 25538 constraints for\nSHA-256 compression from the paper by 10, assuming\
+      \ 5 compressions instantiations\nand the number of allocations equal the number\
+      \ of constraints.\n\nA few caveats to consider:\n- The challenge is requiring\
+      \ the circuit to enforce the correct padding of the input message, while this\n\
+      \  estimate only considers compressions.\n- We are counting allocations for\
+      \ the input variables, while in the challenge score we are not counting them,\n\
+      \  since they are allocated by the caller. This slightly underestimates the\
+      \ challenge cost.\n- We are slightly overestimating the allocations by multiplying\
+      \ the raw compression cost by 5,\n  since in a MD compression chan, internal\
+      \ state variables would be reused between compressions.\n"
 rsa-pkcs1v15-sha256-4096-65537:
   type: public
   instance: RSASSAPKCS1v15_SHA256_4096_65537
@@ -122,3 +170,19 @@ rsa-pkcs1v15-sha256-4096-65537:
   baseline:
     allocations: 412130
     constraints: 415006
+  comparison_points:
+  - name: zk-email
+    score: 752852
+    caveats: "This estimate is taken from the `RSAVerifier65537(121, 34)` template\
+      \ of zk-email.\nIt is an RSAPSS verification template, and it is the most direct\
+      \ comparison to the challenge interface.\n\nThe cost is 375525 allocations and\
+      \ 377327 constraints, when compiled with circom using `--O2`.\n\nThe main interface\
+      \ differences between the challenge and `RSAVerifier65537(121, 34)` are:\n-\
+      \ The challenge requires both the input message digest and the modulus to be\
+      \ provided as byte arrays,\n  while `RSAVerifier65537(121, 34)` takes them directly\
+      \ as big integers.\n- The `RSAVerifier65537(121, 34)` circuit enforces internally\
+      \ that the input message and the modulus are normalized\n  big integers, while\
+      \ the challenge assumes that they are valid byte arrays and does not enforce\
+      \ it.\n- In this estimate we are counting the allocation of the input variables,\
+      \ while in the challenge score we\n  are not counting them, since they are allocated\
+      \ by the caller.\n"

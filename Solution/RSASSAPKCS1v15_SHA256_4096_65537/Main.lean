@@ -291,8 +291,8 @@ private theorem costIs_main (input : Var Input (F circomPrime)) :
   CostIs.pure _
 
 theorem mainCost :
-    Challenge.CostR1CS.circuitCount (main default) = ⟨allocations, constraints⟩ :=
-  circuitCount_eq_of_CostIs (costIs_main _)
+    Challenge.CostR1CS.circuitCost main ⟨allocations, constraints⟩ :=
+  costIs_main
 
 /-- Top-level single-row R1CS assembly over `main`'s `do`-block: thread the
 affineness of each subcircuit output through the three byte/pad subcircuits, the
@@ -319,14 +319,12 @@ private theorem isR1CS_main_param (input : Var Input (F circomPrime))
       rhs := (subcircuit PadDigest.circuit input.digest).output nh }
     (affineW_sub_modExp params4096 _ nrec hSig hN) hH
 
-/-- Single-row R1CS for the offset-0 input allocation of `main`, the form
-`isR1CS_of_IsR1CSCirc` consumes. -/
-private theorem isR1CS_main_zero :
-    IsR1CSCirc (main (varFromOffset Input 0 : Var Input (F circomPrime))) :=
-  isR1CS_main_param _ affineW_input_modulus affineW_input_signature affineW_input_digest
-
 theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
-  isR1CS_of_IsR1CSCirc isR1CS_main_zero
+  isR1CS_of_IsR1CSCirc
+  (fun input hinput =>
+    isR1CS_main_param input (affineW_input_modulus input hinput)
+      (affineW_input_signature input hinput) (affineW_input_digest input hinput))
+  (fun _ _ => affineOutput_unit _)
 
 end Cost
 

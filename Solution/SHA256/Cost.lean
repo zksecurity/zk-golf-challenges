@@ -25,6 +25,48 @@ theorem affineW_varFromOffset_pvec {n : ℕ} (off j : ℕ) (hj : j < n) :
   rw [varFromOffset_vector, Vector.getElem_mapRange]
   exact affineW_varFromOffset _ _
 
+theorem affineW_of_flatten_pvec {n : ℕ}
+    (input : Var (ProvableVector (fields 32) n) (F circomPrime))
+    (hflat : AffineW (input.flatten : fields (n * 32) (Expression (F circomPrime))))
+    (j : ℕ) (hj : j < n) : AffineW input[j] := by
+  intro i hi
+  have hidx : j * 32 + i < n * 32 := by
+    have hlt : j * 32 + i < (j + 1) * 32 := by
+      rw [Nat.succ_mul]
+      exact Nat.add_lt_add_left hi (j * 32)
+    exact lt_of_lt_of_le hlt (Nat.mul_le_mul_right 32 (Nat.succ_le_of_lt hj))
+  have h := hflat (j * 32 + i) hidx
+  rw [Vector.getElem_flatten hidx] at h
+  have hdiv : (j * 32 + i) / 32 = j := by
+    rw [show j * 32 + i = i + j * 32 by omega]
+    rw [Nat.add_mul_div_right i j (by norm_num), Nat.div_eq_of_lt hi, Nat.zero_add]
+  have hmod : (j * 32 + i) % 32 = i := by
+    rw [show j * 32 + i = i + j * 32 by omega]
+    rw [Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hi]
+  simpa [hdiv, hmod] using h
+
+theorem affineW_of_affineProvable_pvec {n : ℕ}
+    (input : Var (ProvableVector (fields 32) n) (F circomPrime))
+    (hinput : AffineProvable input) (j : ℕ) (hj : j < n) :
+    AffineW input[j] := by
+  have hsz : size (ProvableVector (fields 32) n) = n * 32 := rfl
+  have hflat : AffineW (input.flatten : fields (n * 32) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  exact affineW_of_flatten_pvec input hflat j hj
+
+theorem affineProvable_pvec_of_affineW {n : ℕ}
+    (input : Var (ProvableVector (fields 32) n) (F circomPrime))
+    (h : ∀ j (hj : j < n), AffineW input[j]) :
+    AffineProvable input := by
+  intro i hi
+  have hsz : size (ProvableVector (fields 32) n) = n * 32 := rfl
+  have hi' : i < n * 32 := by simpa [hsz] using hi
+  have hdiv : i / 32 < n := by
+    exact Nat.div_lt_of_lt_mul (by simpa [Nat.mul_comm] using hi')
+  have hmod : i % 32 < 32 := Nat.mod_lt _ (by norm_num)
+  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using h (i / 32) hdiv (i % 32) hmod
+
 def and32Cost : Count := ⟨32, 32⟩
 def xor32Cost : Count := ⟨32, 32⟩
 def add32Cost : Count := ⟨33, 34⟩
@@ -50,6 +92,8 @@ def sha256RoundsCost : Count :=
 def compressBlockCost : Count :=
   ⟨messageScheduleCost.allocations + sha256RoundsCost.allocations + 8 * add32Cost.allocations,
    messageScheduleCost.constraints + sha256RoundsCost.constraints + 8 * add32Cost.constraints⟩
+
+def selectDigestCost : Count := ⟨8, 8 * inputBufferLen⟩
 
 /-! ## Per-gadget offset-independent costs (`CostIs`)
 
@@ -310,6 +354,30 @@ theorem affineW_xor32_output (a b : Var (fields 32) (F circomPrime)) (n : ℕ) :
     simp only [Xor32.xor32, circuit_norm]
   rw [h]; exact affineW_varFromOffset _ _
 
+theorem affineW_and32_output (a b : Var (fields 32) (F circomPrime)) (n : ℕ) :
+    AffineW ((And32.and32 a b).output n) := by
+  have h : (And32.and32 a b).output n = varFromOffset (fields 32) n := by
+    simp only [And32.and32, circuit_norm]
+  rw [h]; exact affineW_varFromOffset _ _
+
+theorem affineW_add32_output (a b : Var (fields 32) (F circomPrime)) (n : ℕ) :
+    AffineW ((Add32.add32 a b).output n) := by
+  have h : (Add32.add32 a b).output n = varFromOffset (fields 32) n := by
+    simp only [Add32.add32, circuit_norm]
+  rw [h]; exact affineW_varFromOffset _ _
+
+theorem affineW_ch32_output (e f g : Var (fields 32) (F circomPrime)) (n : ℕ) :
+    AffineW ((Ch32.ch32 e f g).output n) := by
+  have h : (Ch32.ch32 e f g).output n = varFromOffset (fields 32) n := by
+    simp only [Ch32.ch32, circuit_norm]
+  rw [h]; exact affineW_varFromOffset _ _
+
+theorem affineW_maj32_output (a b c : Var (fields 32) (F circomPrime)) (n : ℕ) :
+    AffineW ((Maj32.maj32 a b c).output n) := by
+  have h : (Maj32.maj32 a b c).output n = varFromOffset (fields 32) (n + 32) := by
+    simp only [Maj32.maj32, circuit_norm]
+  rw [h]; exact affineW_varFromOffset _ _
+
 theorem r1cs_and32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb : AffineW b) :
     IsR1CSCirc (And32.and32 a b) :=
   IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector 32 _) fun n =>
@@ -321,7 +389,14 @@ theorem r1cs_and32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb 
       (fun _ => IsR1CSCirc.pure _)
 
 theorem and32_isR1CS : isR1CS (F := F circomPrime) And32.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_and32 _ _ (affineW_varFromOffset _ _) (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+  (fun (input : Var And32.Inputs (F circomPrime)) hinput =>
+    let hflat : AffineW (input.a ++ input.b : fields 64 (Expression (F circomPrime))) := by
+      intro i hi
+      have hsz : size And32.Inputs = 64 := rfl
+      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by omega)
+    r1cs_and32 input.a input.b (AffineW.left_of_append hflat) (AffineW.right_of_append hflat))
+  (fun input _ n => (affineW_and32_output input.a input.b n).affineProvable)
 
 theorem r1cs_xor32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb : AffineW b) :
     IsR1CSCirc (Xor32.xor32 a b) :=
@@ -336,7 +411,14 @@ theorem r1cs_xor32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb 
       (fun _ => IsR1CSCirc.pure _)
 
 theorem xor32_isR1CS : isR1CS (F := F circomPrime) Xor32.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_xor32 _ _ (affineW_varFromOffset _ _) (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+  (fun (input : Var Xor32.Inputs (F circomPrime)) hinput =>
+    let hflat : AffineW (input.a ++ input.b : fields 64 (Expression (F circomPrime))) := by
+      intro i hi
+      have hsz : size Xor32.Inputs = 64 := rfl
+      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by omega)
+    r1cs_xor32 input.a input.b (AffineW.left_of_append hflat) (AffineW.right_of_append hflat))
+  (fun input _ n => (affineW_xor32_output input.a input.b n).affineProvable)
 
 theorem r1cs_add32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb : AffineW b) :
     IsR1CSCirc (Add32.add32 a b) :=
@@ -363,7 +445,14 @@ theorem r1cs_add32 (a b : Var (fields 32) (F circomPrime)) (ha : AffineW a) (hb 
     fun _ => IsR1CSCirc.pure _
 
 theorem add32_isR1CS : isR1CS (F := F circomPrime) Add32.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_add32 _ _ (affineW_varFromOffset _ _) (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+  (fun (input : Var Add32.Inputs (F circomPrime)) hinput =>
+    let hflat : AffineW (input.a ++ input.b : fields 64 (Expression (F circomPrime))) := by
+      intro i hi
+      have hsz : size Add32.Inputs = 64 := rfl
+      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by omega)
+    r1cs_add32 input.a input.b (AffineW.left_of_append hflat) (AffineW.right_of_append hflat))
+  (fun input _ n => (affineW_add32_output input.a input.b n).affineProvable)
 
 theorem r1cs_ch32 (e f g : Var (fields 32) (F circomPrime))
     (he : AffineW e) (hf : AffineW f) (hg : AffineW g) :
@@ -380,8 +469,17 @@ theorem r1cs_ch32 (e f g : Var (fields 32) (F circomPrime))
 
 theorem ch32_isR1CS : isR1CS (F := F circomPrime) Ch32.main :=
   isR1CS_of_IsR1CSCirc
-    (r1cs_ch32 _ _ _ (affineW_varFromOffset _ _) (affineW_varFromOffset _ _)
-      (affineW_varFromOffset _ _))
+  (fun (input : Var Ch32.Inputs (F circomPrime)) hinput =>
+    let hflat : AffineW (input.e ++ (input.f ++ input.g) :
+        fields 96 (Expression (F circomPrime))) := by
+      intro i hi
+      have hsz : size Ch32.Inputs = 96 := rfl
+      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by omega)
+    let htail : AffineW (input.f ++ input.g : fields 64 (Expression (F circomPrime))) :=
+      AffineW.right_of_append hflat
+    r1cs_ch32 input.e input.f input.g
+      (AffineW.left_of_append hflat) (AffineW.left_of_append htail) (AffineW.right_of_append htail))
+  (fun input _ n => (affineW_ch32_output input.e input.f input.g n).affineProvable)
 
 theorem r1cs_maj32 (a b c : Var (fields 32) (F circomPrime))
     (ha : AffineW a) (hb : AffineW b) (hc : AffineW c) :
@@ -407,8 +505,17 @@ theorem r1cs_maj32 (a b c : Var (fields 32) (F circomPrime))
 
 theorem maj32_isR1CS : isR1CS (F := F circomPrime) Maj32.main :=
   isR1CS_of_IsR1CSCirc
-    (r1cs_maj32 _ _ _ (affineW_varFromOffset _ _) (affineW_varFromOffset _ _)
-      (affineW_varFromOffset _ _))
+  (fun (input : Var Maj32.Inputs (F circomPrime)) hinput =>
+    let hflat : AffineW (input.a ++ (input.b ++ input.c) :
+        fields 96 (Expression (F circomPrime))) := by
+      intro i hi
+      have hsz : size Maj32.Inputs = 96 := rfl
+      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by omega)
+    let htail : AffineW (input.b ++ input.c : fields 64 (Expression (F circomPrime))) :=
+      AffineW.right_of_append hflat
+    r1cs_maj32 input.a input.b input.c
+      (AffineW.left_of_append hflat) (AffineW.left_of_append htail) (AffineW.right_of_append htail))
+  (fun input _ n => (affineW_maj32_output input.a input.b input.c n).affineProvable)
 
 /-- Output of a `subcircuit Xor32.circuit` is its witness row, hence affine. -/
 theorem affineW_subOut_xor32 (b : Var Xor32.Inputs (F circomPrime)) (n : ℕ) :
@@ -425,7 +532,14 @@ theorem r1cs_lowerSigma0 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) 
     r1cs_sub_xor32 _ (affineW_subOut_xor32 _ _) (affineW_shr32 hx)
 
 theorem lowerSigma0_isR1CS : isR1CS (F := F circomPrime) LowerSigma0.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_lowerSigma0 _ (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput => r1cs_lowerSigma0 input hinput.affineW)
+    (fun input _ n => by
+      apply AffineW.affineProvable
+      intro i hi
+      simp only [LowerSigma0.main, LowerSigma0.lowerSigma0, circuit_norm, Xor32.circuit,
+        Xor32.elaborated]
+      exact Affine.var _)
 
 theorem r1cs_lowerSigma1 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) :
     IsR1CSCirc (LowerSigma1.lowerSigma1 x) :=
@@ -433,7 +547,14 @@ theorem r1cs_lowerSigma1 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) 
     r1cs_sub_xor32 _ (affineW_subOut_xor32 _ _) (affineW_shr32 hx)
 
 theorem lowerSigma1_isR1CS : isR1CS (F := F circomPrime) LowerSigma1.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_lowerSigma1 _ (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput => r1cs_lowerSigma1 input hinput.affineW)
+    (fun input _ n => by
+      apply AffineW.affineProvable
+      intro i hi
+      simp only [LowerSigma1.main, LowerSigma1.lowerSigma1, circuit_norm, Xor32.circuit,
+        Xor32.elaborated]
+      exact Affine.var _)
 
 theorem r1cs_upperSigma0 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) :
     IsR1CSCirc (UpperSigma0.upperSigma0 x) :=
@@ -441,7 +562,14 @@ theorem r1cs_upperSigma0 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) 
     r1cs_sub_xor32 _ (affineW_subOut_xor32 _ _) (affineW_rotr32 hx)
 
 theorem upperSigma0_isR1CS : isR1CS (F := F circomPrime) UpperSigma0.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_upperSigma0 _ (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput => r1cs_upperSigma0 input hinput.affineW)
+    (fun input _ n => by
+      apply AffineW.affineProvable
+      intro i hi
+      simp only [UpperSigma0.main, UpperSigma0.upperSigma0, circuit_norm, Xor32.circuit,
+        Xor32.elaborated]
+      exact Affine.var _)
 
 theorem r1cs_upperSigma1 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) :
     IsR1CSCirc (UpperSigma1.upperSigma1 x) :=
@@ -449,7 +577,14 @@ theorem r1cs_upperSigma1 (x : Var (fields 32) (F circomPrime)) (hx : AffineW x) 
     r1cs_sub_xor32 _ (affineW_subOut_xor32 _ _) (affineW_rotr32 hx)
 
 theorem upperSigma1_isR1CS : isR1CS (F := F circomPrime) UpperSigma1.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_upperSigma1 _ (affineW_varFromOffset _ _))
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput => r1cs_upperSigma1 input hinput.affineW)
+    (fun input _ n => by
+      apply AffineW.affineProvable
+      intro i hi
+      simp only [UpperSigma1.main, UpperSigma1.upperSigma1, circuit_norm, Xor32.circuit,
+        Xor32.elaborated]
+      exact Affine.var _)
 
 /-! ### Affineness of constants, witness rows and subcircuit outputs -/
 
@@ -618,25 +753,27 @@ theorem r1cs_sha256Rounds (input : Var SHA256Rounds.Inputs (F circomPrime))
   · intro s i n hs
     exact affineW_sha256Round_output _ n hs
 
-theorem affineW_rounds_input_state (j : ℕ) (hj : j < 8) :
-    AffineW ((varFromOffset SHA256Rounds.Inputs 0 :
-      Var SHA256Rounds.Inputs (F circomPrime)).state[j]) := by
-  have heq : (varFromOffset SHA256Rounds.Inputs 0 :
-      Var SHA256Rounds.Inputs (F circomPrime)).state = varFromOffset SHA256State 0 := by
-    simp only [circuit_norm]
-  rw [heq]; exact affineW_varFromOffset_pvec _ _ hj
+theorem affineW_rounds_input_state (input : Var SHA256Rounds.Inputs (F circomPrime))
+    (hinput : AffineProvable input) (j : ℕ) (hj : j < 8) :
+    AffineW input.state[j] := by
+  have hsz : size SHA256Rounds.Inputs = 8 * 32 + 64 * 32 := rfl
+  have hflat : AffineW
+      (input.state.flatten ++ input.schedule.flatten :
+        fields (8 * 32 + 64 * 32) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  exact affineW_of_flatten_pvec input.state (AffineW.left_of_append hflat) j hj
 
-theorem affineW_rounds_input_sched (k : ℕ) (hk : k < 64) :
-    AffineW ((varFromOffset SHA256Rounds.Inputs 0 :
-      Var SHA256Rounds.Inputs (F circomPrime)).schedule[k]) := by
-  have heq : (varFromOffset SHA256Rounds.Inputs 0 :
-      Var SHA256Rounds.Inputs (F circomPrime)).schedule = varFromOffset SHA256Schedule (8 * 32) := by
-    simp only [circuit_norm]
-  rw [heq]; exact affineW_varFromOffset_pvec _ _ hk
-
-theorem sha256Rounds_isR1CS : isR1CS (F := F circomPrime) SHA256Rounds.main :=
-  isR1CS_of_IsR1CSCirc
-    (r1cs_sha256Rounds _ affineW_rounds_input_state affineW_rounds_input_sched)
+theorem affineW_rounds_input_sched (input : Var SHA256Rounds.Inputs (F circomPrime))
+    (hinput : AffineProvable input) (k : ℕ) (hk : k < 64) :
+    AffineW input.schedule[k] := by
+  have hsz : size SHA256Rounds.Inputs = 8 * 32 + 64 * 32 := rfl
+  have hflat : AffineW
+      (input.state.flatten ++ input.schedule.flatten :
+        fields (8 * 32 + 64 * 32) (Expression (F circomPrime))) := by
+    intro i hi
+    simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+  exact affineW_of_flatten_pvec input.schedule (AffineW.right_of_append hflat) k hk
 
 theorem r1cs_scheduleStep (input : Var ScheduleStep.Inputs (F circomPrime))
     (h2 : AffineW input.wm2) (h7 : AffineW input.wm7)
@@ -682,9 +819,6 @@ theorem r1cs_messageSchedule (block : SHA256Block (Expression (F circomPrime)))
     split
     · exact affineW_varFromOffset _ _
     · exact hw _ _
-
-theorem messageSchedule_isR1CS : isR1CS (Input := SHA256Block) (F := F circomPrime) MessageSchedule.main :=
-  isR1CS_of_IsR1CSCirc (r1cs_messageSchedule _ (fun _k hk => affineW_varFromOffset_pvec _ _ hk))
 
 /-- Every word of `stateVar` is affine when the input state is (recursion over
 rounds; each word is either a fresh witness row or a pass-through). -/
@@ -749,6 +883,38 @@ theorem affineW_subOut_sha256Rounds (b : Var SHA256Rounds.Inputs (F circomPrime)
     simp only [circuit_norm, subcircuit, SHA256Rounds.circuit, SHA256Rounds.elaborated]
   rw [heq]; exact affineW_stateVar n b.state hb 64 j hj
 
+theorem sha256Rounds_isR1CS : isR1CS (F := F circomPrime) SHA256Rounds.main :=
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput =>
+      r1cs_sha256Rounds input (affineW_rounds_input_state input hinput)
+        (affineW_rounds_input_sched input hinput))
+    (fun input hinput n =>
+      affineProvable_pvec_of_affineW ((SHA256Rounds.main input).output n)
+        (by
+          intro j hj
+          have heq : (SHA256Rounds.main input).output n = SHA256Rounds.stateVar n input.state 64 := by
+            simp only [SHA256Rounds.main, circuit_norm, SHA256Round.circuit, SHA256Round.elaborated]
+            exact SHA256Rounds.fin_foldl_eq_stateVar _ _ _
+          rw [heq]
+          exact affineW_stateVar n input.state (affineW_rounds_input_state input hinput) 64 j hj))
+
+theorem messageSchedule_isR1CS :
+    isR1CS (Input := SHA256Block) (Output := SHA256Schedule) (F := F circomPrime)
+      MessageSchedule.main :=
+  isR1CS_of_IsR1CSCirc
+    (fun input hinput => r1cs_messageSchedule input (affineW_of_affineProvable_pvec input hinput))
+    (fun input hinput n =>
+      affineProvable_pvec_of_affineW ((MessageSchedule.main input).output n)
+        (by
+          intro k hk
+          have heq : (MessageSchedule.main input).output n =
+              MessageSchedule.varSchedule n input 48 := by
+            simp only [MessageSchedule.main, circuit_norm, ScheduleStep.circuit,
+              ScheduleStep.elaborated]
+            exact MessageSchedule.finFoldl_eq_varSchedule_48 _ _
+          rw [heq]
+          exact affineW_varSchedule n input (affineW_of_affineProvable_pvec input hinput) 48 k hk))
+
 theorem r1cs_sub_messageSchedule (b : SHA256Block (Expression (F circomPrime)))
     (hb : ∀ k (hk : k < 16), AffineW b[k]) : IsR1CSCirc (subcircuit MessageSchedule.circuit b) :=
   IsR1CSCirc.subcircuit (r1cs_messageSchedule _ hb)
@@ -778,17 +944,32 @@ theorem affineW_subOut_compressBlock (input : Var CompressBlock.Inputs (F circom
 
 theorem compressBlock_isR1CS : isR1CS (F := F circomPrime) CompressBlock.main :=
   isR1CS_of_IsR1CSCirc
-    (r1cs_compressBlock _
+  (fun input hinput =>
+    r1cs_compressBlock input
       (fun j hj => by
-        have heq : (varFromOffset CompressBlock.Inputs 0 :
-            Var CompressBlock.Inputs (F circomPrime)).state = varFromOffset SHA256State 0 := by
-          simp only [circuit_norm]
-        rw [heq]; exact affineW_varFromOffset_pvec _ _ hj)
+        have hsz : size CompressBlock.Inputs = 8 * 32 + 16 * 32 := rfl
+        have hflat : AffineW
+            (input.state.flatten ++ input.block.flatten :
+              fields (8 * 32 + 16 * 32) (Expression (F circomPrime))) := by
+          intro i hi
+          simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+        exact affineW_of_flatten_pvec input.state (AffineW.left_of_append hflat) j hj)
       (fun k hk => by
-        have heq : (varFromOffset CompressBlock.Inputs 0 :
-            Var CompressBlock.Inputs (F circomPrime)).block = varFromOffset SHA256Block (8 * 32) := by
-          simp only [circuit_norm]
-        rw [heq]; exact affineW_varFromOffset_pvec _ _ hk))
+        have hsz : size CompressBlock.Inputs = 8 * 32 + 16 * 32 := rfl
+        have hflat : AffineW
+            (input.state.flatten ++ input.block.flatten :
+              fields (8 * 32 + 16 * 32) (Expression (F circomPrime))) := by
+          intro i hi
+          simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using hinput i (by simpa [hsz] using hi)
+        exact affineW_of_flatten_pvec input.block (AffineW.right_of_append hflat) k hk))
+  (fun input _ n =>
+    affineProvable_pvec_of_affineW ((CompressBlock.main input).output n)
+      (by
+        intro j hj
+        simp only [CompressBlock.main, circuit_norm, MessageSchedule.circuit,
+          MessageSchedule.elaborated, SHA256Rounds.circuit, SHA256Rounds.elaborated,
+          Add32.circuit, Add32.elaborated]
+        exact affineW_mapRange_var _))
 
 /-! ## Structural cost / R1CS certificates for the padding gadgets and `main`
 
@@ -996,16 +1177,49 @@ theorem r1cs_sub_checkPad (b : Var CheckPad.Inputs (F circomPrime))
     IsR1CSCirc (assertion CheckPad.circuit b) :=
   IsR1CSCirc.assertion (r1cs_checkPad b hmsglen hmsg hflags hpadded)
 
-theorem costIs_sub_selectDigest (input : Var SelectDigest.Inputs (F circomPrime)) :
-    CostIs (subcircuit SelectDigest.circuit input) Count.zero :=
-  CostIs.subcircuit (fun _ => rfl)
+theorem costIs_selectDigest (input : Var SelectDigest.Inputs (F circomPrime)) :
+    CostIs (SelectDigest.main input) selectDigestCost :=
+  CostIs.bind (CostIs.witnessVector 8 _) fun digest =>
+    CostIs.bind
+      (CostIs.forEach fun _ =>
+        CostIs.forEach fun _ => CostIs.assertZero _)
+      fun _ => CostIs.pure digest
 
-/-- `SelectDigest.main` is a pure output (no operations), so it is trivially R1CS. -/
-theorem r1cs_selectDigest (b : Var SelectDigest.Inputs (F circomPrime)) :
+theorem costIs_sub_selectDigest (input : Var SelectDigest.Inputs (F circomPrime)) :
+    CostIs (subcircuit SelectDigest.circuit input) selectDigestCost :=
+  CostIs.subcircuit (costIs_selectDigest _)
+
+theorem affine_selectedWordExpr (b : Var SelectDigest.Inputs (F circomPrime))
+    (hstates : ∀ k (hk : k < paddedBlocksLen), ∀ j (hj : j < 8),
+      AffineW ((SelectDigest.statesVec b)[k]'hk)[j])
+    (w : Fin 8) (len : Fin inputBufferLen) :
+    Affine (SelectDigest.selectedWordExpr b w len) := by
+  unfold SelectDigest.selectedWordExpr
+  obtain ⟨k, hk⟩ := SelectDigest.stateForLen_mem (SelectDigest.statesVec b) len.val
+  rw [hk]
+  exact affine_fieldFromBitsExpr _ (hstates k k.isLt w.val w.isLt)
+
+theorem r1cs_selectDigest (b : Var SelectDigest.Inputs (F circomPrime))
+    (hflags : AffineW b.lenFlags)
+    (hstates : ∀ k (hk : k < paddedBlocksLen), ∀ j (hj : j < 8),
+      AffineW ((SelectDigest.statesVec b)[k]'hk)[j]) :
     IsR1CSCirc (subcircuit SelectDigest.circuit b) :=
-  IsR1CSCirc.subcircuit (fun n => by
-    rw [show (SelectDigest.circuit.main b).operations n = [] from rfl, Lemmas.operationsIsR1CS_nil]
-    trivial)
+  IsR1CSCirc.subcircuit fun n =>
+    (IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector 8 _) fun digestOff =>
+      IsR1CSCirc.bind
+        (IsR1CSCirc.forEach fun w outerOff =>
+          (IsR1CSCirc.forEach fun len rowOff =>
+            IsR1CSCirc.assertZero
+              (isR1CSRow_mul (hflags len.val len.isLt)
+                (Affine.sub (affineW_witnessVector_output 8 _ digestOff w.val w.isLt)
+                  (affine_selectedWordExpr b hstates w len))) rowOff) outerOff)
+        fun _ => IsR1CSCirc.pure _) n
+
+theorem affineW_subOut_selectDigest (input : Var SelectDigest.Inputs (F circomPrime)) (n : ℕ) :
+    AffineW ((subcircuit SelectDigest.circuit input).output n) := by
+  intro i hi
+  simp only [circuit_norm, subcircuit, SelectDigest.circuit, SelectDigest.elaborated]
+  exact Affine.var _
 
 theorem costIs_sub_compressBlock (b : Var CompressBlock.Inputs (F circomPrime)) :
     CostIs (subcircuit CompressBlock.circuit b) compressBlockCost :=
@@ -1026,19 +1240,22 @@ theorem affineW_state0 (j : ℕ) (hj : j < 8) :
 
 /-! ### Symbolic top-level input atoms
 
-The challenge's `isR1CS main` allocates the inputs as *variables* at offset 0, so
-the message bytes and length are affine (degree-1) atoms, not constants. -/
+The challenge's `isR1CS main` now ranges over any affine symbolic input, so the
+message bytes and length are obtained by projecting the generic `AffineProvable`
+hypothesis. -/
 
-theorem affineW_input_message :
-    AffineW ((varFromOffset Input 0 : Var Input (F circomPrime)).message) := by
-  have heq : (varFromOffset Input 0 : Var Input (F circomPrime)).message
-      = varFromOffset (fields inputBufferLen) 0 := by simp only [circuit_norm]
-  rw [heq]; exact affineW_varFromOffset _ _
+theorem affineW_input_message (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    AffineW input.message := by
+  intro i hi
+  have hsz : size Input = inputBufferLen + 1 := rfl
+  have hi' : i < size Input := by omega
+  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz, hi] using hinput i hi'
 
-theorem affine_input_messageLen :
-    Affine ((varFromOffset Input 0 : Var Input (F circomPrime)).messageLen) := by
-  simp only [circuit_norm]
-  exact Affine.var _
+theorem affine_input_messageLen (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
+    Affine input.messageLen := by
+  have hsz : size Input = inputBufferLen + 1 := rfl
+  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using
+    hinput inputBufferLen (by omega)
 
 end Cost
 
