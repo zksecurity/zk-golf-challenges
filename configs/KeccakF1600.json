@@ -1,0 +1,21 @@
+{
+    "challenge_module": "Challenge.Instances.KeccakF1600.Challenge",
+    "solution_module": "Solution.KeccakF1600.Main",
+    "theorem_names": [
+        "Solution.KeccakF1600.soundness",
+        "Solution.KeccakF1600.completeness",
+        "Solution.KeccakF1600.mainCost",
+        "Solution.KeccakF1600.isR1CS"
+    ],
+    "definition_names": [
+        "Solution.KeccakF1600.main",
+        "Solution.KeccakF1600.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice",
+        "Challenge.Instances.KeccakF1600.Interface.hCircomPrime"
+    ],
+    "enable_nanoda": false
+}

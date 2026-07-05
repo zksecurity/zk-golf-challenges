@@ -118,6 +118,66 @@ sha256-hash:
       \ challenge cost.\n- We are slightly overestimating the allocations by multiplying\
       \ the raw compression cost by 5,\n  since in a MD compression chan, internal\
       \ state variables would be reused between compressions.\n"
+keccak-f1600:
+  type: public
+  instance: KeccakF1600
+  config: configs/KeccakF1600.json
+  cost: Challenge/Instances/KeccakF1600/Cost.lean
+  namespace: Solution.KeccakF1600
+  files:
+  - configs/KeccakF1600.json
+  - Challenge/Specs/Keccak.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/KeccakF1600
+  - Solution/KeccakF1600
+  - Tests/Keccak.lean
+  content:
+    title: Keccak-f[1600] Permutation
+    description: "# Keccak-f[1600] Permutation\nYour goal is to build a circuit that\
+      \ applies the Keccak-f[1600]\npermutation (the SHA-3 permutation, FIPS 202)\
+      \ to a 1600-bit state.\n\n## Interface\n\n```lean\n@[reducible] def stateBitsLen\
+      \ : \u2115 := 1600\n\nstructure Input (F : Type) where\n  state : Vector F stateBitsLen\n\
+      \nstructure Output (F : Type) where\n  state : Vector F stateBitsLen\n```\n\n\
+      The input is the state as a 1600-bit string, one bit per field element,\nwith\
+      \ bit `64\xB7(x + 5y) + z` holding bit `z` of the lane at coordinates\n`(x,\
+      \ y)` (FIPS 202, Section 3.1.2). The output is the permuted state in\nthe same\
+      \ encoding.\n\nThe input assumptions say that every element of the state is\
+      \ a bit.\nThis property is assumed to be checked elsewhere (e.g., by the caller\
+      \ of\nthe circuit) and does not have to be enforced by the circuit itself.\n\
+      \n```lean\n@[reducible] def IsBitString {n : \u2115} (xs : Vector \u2115 n)\
+      \ : Prop :=\n  \u2200 i : Fin n, xs[i] < 2\n\ndef Assumptions (input : Vector\
+      \ \u2115 1600) : Prop :=\n  IsBitString input\n```\n\nThe circuit must guarantee\
+      \ that the output is the Keccak-f[1600]\npermutation of the input state: 24\
+      \ rounds of \u03B8, \u03C1, \u03C0, \u03C7, \u03B9 as specified\nin `Specs.Keccak`.\n\
+      \n```lean\ndef Spec (input : Vector \u2115 1600) (output : Vector \u2115 1600)\
+      \ : Prop :=\n  output = keccakF1600 input\n```\n"
+    tags:
+    - permutation
+    - keccak
+    - sha3
+  baseline:
+    allocations: 153600
+    constraints: 153600
+  comparison_points:
+  - name: vocdoni/keccak256-circom
+    score: 307200
+    caveats: "The de-facto reference pure-R1CS Keccak implementation in Circom, and\
+      \ the\nclosest apples-to-apples comparison to the challenge. The score is the\
+      \ bare\nKeccak-f[1600] permutation: its `Keccakf()` template takes 1600 free\
+      \ input\nbits and returns 1600 output bits, exactly the challenge interface\
+      \ (no\npadding, absorb, or squeeze).\n\nCompiled at commit `af3e898` with the\
+      \ circom 2.x compiler and `--O2`,\n`Keccakf()` reports 153600 non-linear constraints\
+      \ and 155201 wires.\nExcluding the constant wire and the 1600 caller-provided\
+      \ input signals,\nthat is 153600 allocations and 153600 constraints \u2014 landing\
+      \ exactly on the\nbaseline.\n\nA few caveats to consider:\n- The repo's headline\
+      \ \"\u2248150848 constraints\" (its README) is a full\n  Keccak-256 hash of\
+      \ a 32-byte input, not the permutation. That circuit\n  absorbs a short message\
+      \ into an all-zero state, so the compiler folds\n  away much of the first round;\
+      \ the free-input permutation cannot, which is\n  why it is slightly larger (153600\
+      \ vs 150848).\n- As in the challenge, \u03C1 and \u03C0 are pure rewiring (0\
+      \ constraints), \u03B8 and \u03B9\n  are linear, and \u03C7 is the only essential\
+      \ nonlinearity (one AND per bit).\n- We do not count the 1600 input signals\
+      \ as allocations, since in the\n  challenge they are allocated by the caller.\n"
 rsa-pkcs1v15-sha256-4096-65537:
   type: public
   instance: RSASSAPKCS1v15_SHA256_4096_65537
