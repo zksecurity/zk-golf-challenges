@@ -6672,4 +6672,4 @@ def verifySha512_256Tc257Sig : Vector ℕ 256 :=
 /-- Wycheproof sha512_256 tcId 257: RSASSA-PSS signature Flags: WrongPrimitive. -/
 example : verifySignature HashAlgorithm.sha512_256 verifySha512_256Group0E verifySha512_256Group0N verifySha512_256Tc257Digest verifySha512_256Tc257Sig = false := by native_decide
 
-end Specs.RSA2048.Tests
+end Specs.RSASSAPKCS1v15.Tests

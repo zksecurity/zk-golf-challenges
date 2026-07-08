@@ -1,0 +1,22 @@
+{
+    "challenge_module": "Challenge.Instances.Secp256k1ScalarMulFixedBase.Challenge",
+    "solution_module": "Solution.Secp256k1ScalarMulFixedBase.Main",
+    "theorem_names": [
+        "Solution.Secp256k1ScalarMulFixedBase.soundness",
+        "Solution.Secp256k1ScalarMulFixedBase.completeness",
+        "Solution.Secp256k1ScalarMulFixedBase.mainCost",
+        "Solution.Secp256k1ScalarMulFixedBase.isR1CS"
+    ],
+    "definition_names": [
+        "Solution.Secp256k1ScalarMulFixedBase.main",
+        "Solution.Secp256k1ScalarMulFixedBase.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice",
+        "Challenge.Instances.Secp256k1ScalarMulFixedBase.Interface.hCircomPrime",
+        "Specs.Secp256k1.hPrime"
+    ],
+    "enable_nanoda": false
+}

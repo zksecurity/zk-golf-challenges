@@ -168,7 +168,7 @@ keccak-f1600:
       \ (no\npadding, absorb, or squeeze).\n\nCompiled at commit `af3e898` with the\
       \ circom 2.x compiler and `--O2`,\n`Keccakf()` reports 153600 non-linear constraints\
       \ and 155201 wires.\nExcluding the constant wire and the 1600 caller-provided\
-      \ input signals,\nthat is 153600 allocations and 153600 constraints \u2014 landing\
+      \ input signals,\nthat is 153600 allocations and 153600 constraints, landing\
       \ exactly on the\nbaseline.\n\nA few caveats to consider:\n- The repo's headline\
       \ \"\u2248150848 constraints\" (its README) is a full\n  Keccak-256 hash of\
       \ a 32-byte input, not the permutation. That circuit\n  absorbs a short message\
@@ -246,3 +246,174 @@ rsa-pkcs1v15-sha256-4096-65537:
       \ it.\n- In this estimate we are counting the allocation of the input variables,\
       \ while in the challenge score we\n  are not counting them, since they are allocated\
       \ by the caller.\n"
+secp256k1-scalar-mul:
+  type: public
+  instance: Secp256k1ScalarMul
+  config: configs/Secp256k1ScalarMul.json
+  cost: Challenge/Instances/Secp256k1ScalarMul/Cost.lean
+  namespace: Solution.Secp256k1ScalarMul
+  files:
+  - configs/Secp256k1ScalarMul.json
+  - Challenge/Specs/Secp256k1.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/Secp256k1ScalarMul
+  - Solution/Secp256k1ScalarMul
+  - Tests/Secp256k1.lean
+  content:
+    title: secp256k1 Scalar Multiplication
+    description: "# secp256k1 Variable-Base Scalar Multiplication\nYour goal is to\
+      \ build a circuit that multiplies a point on the secp256k1\ncurve (`y\xB2 =\
+      \ x\xB3 + 7` over the 256-bit prime field) by a scalar given as\na sequence\
+      \ of bits.\n\n## Interface\n\n```lean\nstructure Input (F : Type) where\n  bits\
+      \ : Vector F 256   -- scalar bits, most significant first\n  px : Vector F 32\
+      \      -- base-point x, big-endian bytes\n  py : Vector F 32      -- base-point\
+      \ y, big-endian bytes\n\nstructure Output (F : Type) where\n  x : Vector F 32\
+      \       -- result x, big-endian bytes (0 when isInf = 1)\n  y : Vector F 32\
+      \       -- result y, big-endian bytes (0 when isInf = 1)\n  isInf : F      \
+      \       -- boolean point-at-infinity flag\n```\n\nThe input assumptions say\
+      \ the scalar entries are bits, the coordinates\nare canonical big-endian byte\
+      \ strings (`< p`), and the base point lies\non the curve. These are assumed\
+      \ to be checked by the caller and do not\nhave to be enforced by the circuit.\n\
+      \nThe circuit must guarantee that the output is the **well-formed, unique**\n\
+      byte encoding of the true multiple `[k]P` under the complete group law\n(`Specs.Secp256k1ScalarMul.Spec`):\
+      \ output entries are bytes, the\nencoded coordinates are canonical, the flag\
+      \ is boolean, and the\ncoordinate bytes are zero when the result is the point\
+      \ at infinity;\nwhich happens exactly when `k \u2261 0 (mod n)`. The relation\
+      \ is total, so\nevery scalar bit sequence (any value, including `k \u2265 n`)\
+      \ must be\nhandled.\n\n```lean\ndef Spec (input : Input (F circomPrime)) (output\
+      \ : Output (F circomPrime))\n    (_data : ProverData (F circomPrime)) : Prop\
+      \ :=\n  OutputValid output \u2227\n  Specs.Secp256k1ScalarMul.Spec (input.bits.map\
+      \ ZMod.val)\n    { x := decodeCoord input.px, y := decodeCoord input.py }\n\
+      \    (decodeOutput output)\n```\n"
+    tags:
+    - elliptic-curve
+    - secp256k1
+  baseline:
+    allocations: 8182144
+    constraints: 8279944
+  comparison_points:
+  - name: gnark (R1CS)
+    score: 294879
+    caveats: "Consensys gnark v0.15.0 `sw_emulated.ScalarMul` for secp256k1 emulated\n\
+      over the BN254 scalar field, compiled to R1CS with `r1cs.NewBuilder`\n(the same\
+      \ rank-1 constraint system Groth16 uses): 117350 constraints and\n177529 internal\
+      \ variables, so score = allocations + constraints = 294879.\n\n`ScalarMul` uses\
+      \ the GLV + fake-GLV endomorphism method, and this is its\n*complete*-arithmetic\
+      \ cost (the default), which handles the exceptional\ncases (point at infinity,\
+      \ P = \xB1Q), the fair match to this challenge's\ntotal spec. The *incomplete*\
+      \ variant (`WithIncompleteArithmetic`, faster\nbut undefined on the exceptional\
+      \ set) is 56221 constraints; that is the\n~60k figure sometimes quoted, but\
+      \ it does not compute the total relation.\n\nInterface differences make this\
+      \ a lower bound on a full solution:\n- gnark takes the scalar and point as emulated\
+      \ field elements, while the\n  challenge takes the scalar as 256 bits and the\
+      \ point as big-endian\n  bytes and must decode/encode them (extra range checks\
+      \ + recomposition).\n- gnark exposes no point-at-infinity flag and does not\
+      \ enforce a\n  canonical, unique byte encoding of the output; the challenge\
+      \ does both.\n- \"allocations\" is gnark's internal-variable count (interface\
+      \ inputs\n  excluded, as in the challenge score).\n"
+  - name: circom-ecdsa (R1CS)
+    score: 2790986
+    caveats: '0xPARC circom-ecdsa `Secp256k1ScalarMult(64, 4)` (n=64-bit, k=4-limb
+
+      bigint emulation of secp256k1 F_p), compiled with circom 2.2.3 using
+
+      --O2: 1399441 non-linear (R1CS) constraints and 1391545 wires, so score =
+
+      1391545 + 1399441 = 2790986. This is the classic Circom/Groth16 baseline
+
+      (windowed double-and-add, no endomorphism); the gnark GLV figure above is
+
+      ~9x smaller.
+
+
+      Same interface differences as the gnark entry: the scalar is 4 x 64-bit
+
+      limbs (not 256 bits), the output is 2 x 4 limbs (not big-endian bytes),
+
+      and there is no infinity flag or canonical-encoding enforcement.
+
+      "allocations" here is circom''s wire count (which includes the handful of
+
+      interface inputs); "constraints" is the non-linear (R1CS) count.
+
+      '
+secp256k1-fixed-base-scalar-mul:
+  type: public
+  instance: Secp256k1ScalarMulFixedBase
+  config: configs/Secp256k1ScalarMulFixedBase.json
+  cost: Challenge/Instances/Secp256k1ScalarMulFixedBase/Cost.lean
+  namespace: Solution.Secp256k1ScalarMulFixedBase
+  files:
+  - configs/Secp256k1ScalarMulFixedBase.json
+  - Challenge/Specs/Secp256k1.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Instances/Secp256k1ScalarMulFixedBase
+  - Solution/Secp256k1ScalarMulFixedBase
+  - Tests/Secp256k1.lean
+  content:
+    title: secp256k1 Fixed-Base Scalar Multiplication
+    description: "# secp256k1 Fixed-Base Scalar Multiplication\nYour goal is to build\
+      \ a circuit that multiplies the **fixed** secp256k1\ngenerator `G` (the standard\
+      \ base point of `y\xB2 = x\xB3 + 7` over the 256-bit\nprime field) by a scalar\
+      \ given as a sequence of bits.\n\n## Interface\n\n```lean\nstructure Input (F\
+      \ : Type) where\n  bits : Vector F 256   -- scalar bits, most significant first\n\
+      \nstructure Output (F : Type) where\n  x : Vector F 32       -- result x, big-endian\
+      \ bytes (0 when isInf = 1)\n  y : Vector F 32       -- result y, big-endian\
+      \ bytes (0 when isInf = 1)\n  isInf : F             -- boolean point-at-infinity\
+      \ flag\n```\n\nThe base point is the compile-time constant generator `G`, so\
+      \ it is not\npart of the input. The only input assumption is that the scalar\
+      \ entries\nare bits; this is assumed to be checked by the caller and does not\
+      \ have\nto be enforced by the circuit.\n\nThe circuit must guarantee that the\
+      \ output is the **well-formed, unique**\nbyte encoding of the true multiple\
+      \ `[k]G` under the complete group law\n(`Specs.Secp256k1ScalarMulFixedBase.Spec`):\
+      \ output entries are\nbytes, the encoded coordinates are canonical, the flag\
+      \ is boolean, and\nthe coordinate bytes are zero when the result is the point\
+      \ at infinity;\nwhich happens exactly when `k \u2261 0 (mod n)`. The relation\
+      \ is total, so\nevery scalar bit sequence (any value, including `k \u2265 n`)\
+      \ must be\nhandled.\n\nBecause the base point is fixed, the circuit has room\
+      \ to be far cheaper\nthan the variable-base version (e.g. precomputed multiples\
+      \ of `G`); the\nbaseline reuses the generic double-and-add gadget and does not\
+      \ exploit\nthis.\n\n```lean\ndef Spec (input : Input (F circomPrime)) (output\
+      \ : Output (F circomPrime))\n    (_data : ProverData (F circomPrime)) : Prop\
+      \ :=\n  OutputValid output \u2227\n  Specs.Secp256k1ScalarMulFixedBase.Spec\
+      \ (input.bits.map ZMod.val)\n    (decodeOutput output)\n```\n"
+    tags:
+    - elliptic-curve
+    - secp256k1
+  baseline:
+    allocations: 8182144
+    constraints: 8279944
+  comparison_points:
+  - name: circom-ecdsa (R1CS)
+    score: 190360
+    caveats: "0xPARC circom-ecdsa `ECDSAPrivToPub(64, 4)`: fixed-base [k]G with\n\
+      precomputed multiples of G (stride-8 windowing), n=64/k=4 bigint\nemulation,\
+      \ compiled with circom 2.2.3 using --O2: 95444 non-linear\n(R1CS) constraints\
+      \ and 94916 wires, so score = 94916 + 95444 = 190360.\nFor the fixed-base case\
+      \ circom's precomputed-table approach beats gnark's\nnon-native GLV path (below).\n\
+      \nInterface differences make this a lower bound on a full solution:\n- Scalar\
+      \ as 4 x 64-bit limbs, not 256 bits; output as 2 x 4 limbs, not\n  big-endian\
+      \ bytes; the challenge additionally decomposes the bits and\n  encodes the bytes.\n\
+      - No point-at-infinity flag and no canonical output-encoding enforcement;\n\
+      \  `ECDSAPrivToPub` assumes a non-zero scalar and a valid affine result.\n-\
+      \ \"allocations\" is circom's wire count (interface inputs included);\n  \"\
+      constraints\" is the non-linear (R1CS) count.\n"
+  - name: gnark (R1CS)
+    score: 292542
+    caveats: 'Consensys gnark v0.15.0 `sw_emulated.ScalarMulBase` (fixed generator,
+
+      complete arithmetic), compiled to R1CS: 116402 constraints and 176140
+
+      internal variables, score 292542. For emulated curves gnark''s fixed-base
+
+      path is only marginally cheaper than variable-base (both ~117k
+
+      constraints): the generator multiples are constants but the arithmetic is
+
+      still non-native, so circom-ecdsa''s precomputed table (above) wins for
+
+      fixed-base. Same interface caveats as the gnark variable-base entry
+
+      (emulated-field inputs, no infinity flag, no canonical byte encoding).
+
+      '
