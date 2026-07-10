@@ -281,5 +281,145 @@ def circuit : FormalCircuit (F circomPrime) (fields modulusBytesLen) (BigInt num
   main, elaborated, Assumptions, Spec, soundness, completeness
 }
 
+attribute [local irreducible] ByteBlock.circuit
+
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true]
+  refine ⟨?wbits, ?blocks⟩
+  case wbits =>
+    intro _ h_input
+    have hbytes : ∀ (j : ℕ) (hj : j < modulusBytesLen),
+        Expression.eval env.toEnvironment (input[j]'hj) = Expression.eval env'.toEnvironment (input[j]'hj) := by
+      intro j hj
+      have := congrArg (fun v : Vector (F circomPrime) modulusBytesLen => v[j]'hj) h_input
+      simpa only [circuit_norm, Vector.getElem_map] using this
+    simp only [bitsWitness]
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn]
+    by_cases hj : 511 - i / 8 < modulusBytesLen
+    · rw [dif_pos hj, dif_pos hj, hbytes _ hj]
+    · rw [dif_neg hj, dif_neg hj]
+  case blocks =>
+    intro i
+    have hlen : (witnessVector totalBits (bitsWitness input)).localLength offset = totalBits := by
+      simp only [circuit_norm]
+    set allBits := (witnessVector totalBits (bitsWitness input)).output offset with hAllBits
+    set bs := byteSlice input (Vector.finRange 16)[i.val] with hbs
+    set bt := bitSlice allBits (Vector.finRange 16)[i.val] with hbt
+    have halen : (assertion ByteBlock.circuit
+        { bytes := byteSlice input default,
+          bits := bitSlice allBits default }).localLength = 0 := by
+      simp only [circuit_norm, ByteBlock.circuit, ByteBlock.elaborated]
+    rw [hlen, halen, Nat.mul_zero, Nat.add_zero]
+    have hcond : ∀ (k : ℕ) (e1 e2 : ProverEnvironment (F circomPrime)),
+        offset + totalBits ≤ k → e1.AgreesBelow k e2 →
+        eval e1 input = eval e2 input →
+        eval e1 ({ bytes := bs, bits := bt } : Var ByteBlock.Inputs (F circomPrime))
+          = eval e2 ({ bytes := bs, bits := bt } : Var ByteBlock.Inputs (F circomPrime)) := by
+      intro k e1 e2 hle h_agree h_input
+      have hbytes : ∀ (j : ℕ) (hj : j < modulusBytesLen),
+          Expression.eval e1.toEnvironment (input[j]'hj) = Expression.eval e2.toEnvironment (input[j]'hj) := by
+        intro j hj
+        have := congrArg (fun v : Vector (F circomPrime) modulusBytesLen => v[j]'hj) h_input
+        simpa only [circuit_norm, Vector.getElem_map] using this
+      have hbits : ∀ (q : ℕ) (hq : q < totalBits),
+          Expression.eval e1.toEnvironment (allBits[q]'hq) = Expression.eval e2.toEnvironment (allBits[q]'hq) := by
+        intro q hq
+        have hvar : allBits[q]'hq = var (F := F circomPrime) { index := offset + q } := by
+          rw [hAllBits]; simp only [circuit_norm]
+        rw [hvar]
+        simp only [Expression.eval]
+        exact h_agree (offset + q) (by omega)
+      have hbs_map : Vector.map (Expression.eval e1.toEnvironment) bs
+          = Vector.map (Expression.eval e2.toEnvironment) bs := by
+        apply Vector.ext; intro dj hdj
+        rw [Vector.getElem_map, Vector.getElem_map, hbs, byteSlice, Vector.getElem_ofFn]
+        exact hbytes _ _
+      have hbt_map : Vector.map (Expression.eval e1.toEnvironment) bt
+          = Vector.map (Expression.eval e2.toEnvironment) bt := by
+        apply Vector.ext; intro l hl
+        rw [Vector.getElem_map, Vector.getElem_map, hbt, bitSlice, Vector.getElem_ofFn]
+        exact hbits _ _
+      simp only [circuit_norm, hbs_map, hbt_map]
+    have result := @FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (F circomPrime) _ (fields modulusBytesLen) ByteBlock.Inputs _ _
+      ByteBlock.circuit input ({ bytes := bs, bits := bt } : Var ByteBlock.Inputs (F circomPrime))
+      (offset + totalBits) hcond ByteBlock.computableWitnesses
+    exact result env env'
+
+/-- `Bytes.packLimbs` is affine over the bit variables, so its evaluation agrees
+under any two environments that agree on all `totalBits` bit variables. -/
+lemma eval_packLimbs_congr {env env' : Environment (F circomPrime)}
+    (bits : Vector (Expression (F circomPrime)) totalBits)
+    (h : ∀ (p : ℕ) (hp : p < totalBits),
+      Expression.eval env (bits[p]'hp) = Expression.eval env' (bits[p]'hp)) :
+    ∀ (k : ℕ) (hk : k < numLimbs),
+      Expression.eval env ((Bytes.packLimbs bits)[k]'hk)
+        = Expression.eval env' ((Bytes.packLimbs bits)[k]'hk) := by
+  intro k hk
+  unfold Bytes.packLimbs
+  rw [Vector.getElem_ofFn, BytesLemmas.eval_foldl_add, BytesLemmas.eval_foldl_add]
+  apply Finset.sum_congr rfl
+  intro i _
+  by_cases hi : limbBits * k + i.val < totalBits
+  · rw [dif_pos hi]
+    simp only [Expression.eval]
+    rw [h _ hi]
+  · rw [dif_neg hi]
+    simp only [Expression.eval]
+
+/-- Vector-level agreement of the `BytesToBigInt` output (`packLimbs` of the
+witnessed bit block). Mirrors `MulMod.eval_output_of_agreesBelow`. -/
+lemma eval_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F circomPrime)}
+    (bytes : Var (fields modulusBytesLen) (F circomPrime))
+    (h_agree : env.AgreesBelow (offset + totalBits) env') :
+    eval env.toEnvironment ((main bytes).output offset)
+      = eval env'.toEnvironment ((main bytes).output offset) := by
+  have hout : (main bytes).output offset
+      = Bytes.packLimbs (varFromOffset (fields totalBits) offset) :=
+    elaborated.output_eq bytes offset
+  rw [hout]
+  have hbits : ∀ (p : ℕ) (hp : p < totalBits),
+      Expression.eval env.toEnvironment
+          ((varFromOffset (fields totalBits) offset : Var (fields totalBits) (F circomPrime))[p]'hp)
+        = Expression.eval env'.toEnvironment
+          ((varFromOffset (fields totalBits) offset : Var (fields totalBits) (F circomPrime))[p]'hp) := by
+    intro p hp
+    exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+      h_agree (le_refl _) _ (Vector.getElem_mem hp)
+  rw [CircuitType.eval_var_fields, CircuitType.eval_var_fields]
+  apply Vector.ext
+  intro k hk
+  rw [Vector.getElem_map, Vector.getElem_map]
+  exact eval_packLimbs_congr _ hbits k hk
+
+/-- Circuit-level (subcircuit) output agreement, bridging `eval_output_of_agreesBelow`
+through `elaborated.output_eq`. Mirrors `CompressBlock.eval_circuit_output_of_agreesBelow`;
+used by `Main`. -/
+lemma eval_circuit_output_of_agreesBelow {offset : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (bytes : Var (fields modulusBytesLen) (F circomPrime))
+    (h_agree : env.AgreesBelow (offset + totalBits) env') :
+    eval env.toEnvironment (circuit.output bytes offset)
+      = eval env'.toEnvironment (circuit.output bytes offset) := by
+  change eval env.toEnvironment (ElaboratedCircuit.output main bytes offset) =
+    eval env'.toEnvironment (ElaboratedCircuit.output main bytes offset)
+  rw [← elaborated.output_eq bytes offset]
+  exact eval_output_of_agreesBelow bytes h_agree
+
 end BytesToBigInt
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537

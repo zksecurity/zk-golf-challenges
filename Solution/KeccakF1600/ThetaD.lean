@@ -74,6 +74,47 @@ def circuit : FormalCircuit (F p) KeccakBitRow KeccakBitRow where
   soundness := soundness
   completeness := completeness
 
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.mapFinRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  intro x
+  exact @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+    (F p) _ KeccakBitRow XorLane.Inputs (fields 64) _ _ _
+    XorLane.circuit input ⟨input[(x.val + 4) % 5], rotl 1 input[(x.val + 1) % 5]⟩ _
+    (by
+      intro env env' h_input
+      simp [circuit_norm] at h_input ⊢
+      have hword : ∀ (j : ℕ) (hj : j < 5),
+          Vector.map (Expression.eval env.toEnvironment) (input[j]'hj)
+            = Vector.map (Expression.eval env'.toEnvironment) (input[j]'hj) := by
+        intro j hj
+        rw [← CircuitType.eval_var_fields env.toEnvironment (input[j]'hj),
+          ← CircuitType.eval_var_fields env'.toEnvironment (input[j]'hj),
+          getElem_eval_vector env.toEnvironment input j hj,
+          getElem_eval_vector env'.toEnvironment input j hj]
+        exact congrArg (fun v : KeccakBitRow (F p) => v[j]'hj) h_input
+      refine ⟨fun a ha => ?_, fun a ha => ?_⟩
+      · simp only [Vector.mem_iff_getElem] at ha
+        rcases ha with ⟨b, hb, hget⟩
+        rw [← hget]
+        simpa [Vector.getElem_map] using
+          Vector.ext_iff.mp (hword ((↑x + 4) % 5) (by omega)) b hb
+      · simp only [Vector.mem_iff_getElem] at ha
+        rcases ha with ⟨b, hb, hget⟩
+        rw [← hget, rotl, Vector.getElem_rotate hb]
+        simpa [Vector.getElem_map] using
+          Vector.ext_iff.mp (hword ((↑x + 1) % 5) (by omega))
+            ((b + (64 - 1 % 64)) % 64) (Nat.mod_lt _ (by norm_num)))
+    XorLane.computableWitnesses env env'
+
 end ThetaD
 end Solution.KeccakF1600
 end

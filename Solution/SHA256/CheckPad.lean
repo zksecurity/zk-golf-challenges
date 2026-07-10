@@ -1,6 +1,7 @@
 import Solution.SHA256.CheckLenFlags
 import Solution.SHA256.BitsBool
 import Solution.SHA256.CheckPaddedByte
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [h_large : Fact (p > 2^33)]
@@ -118,6 +119,65 @@ def circuit : FormalAssertion (F p) Inputs := {
   completeness := by simp only [completeness]
   exposedChannels_eq := by intro _ _ exposed h; simp at h
 }
+
+attribute [local irreducible] main CheckLenFlags.circuit BitsBool.circuit CheckPaddedByte.circuit
+
+set_option maxRecDepth 8000 in
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' offset ((main input).operations offset) := by
+    have h_lenFlags : (CheckLenFlags.circuit (p := p)).ComputableWitnesses :=
+      CheckLenFlags.computableWitnesses
+    have h_bits : (BitsBool.circuit (p := p) paddedBitsLen).ComputableWitnesses :=
+      BitsBool.computableWitnesses paddedBitsLen
+    have h_byte : ∀ j : Fin paddedBytesLen,
+        (CheckPaddedByte.circuit (p := p) j).ComputableWitnesses :=
+      fun j => CheckPaddedByte.computableWitnesses j
+    unfold main
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff]
+    and_intros
+    · exact @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses
+        (F p) _ Inputs CheckLenFlags.Inputs _ _
+        CheckLenFlags.circuit input ⟨input.messageLen, input.lenFlags⟩ _
+        (by
+          intro env env' h_input
+          simp [circuit_norm] at h_input ⊢
+          exact ⟨h_input.1, h_input.2.2.1⟩)
+        h_lenFlags env env'
+    · exact @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses
+        (F p) _ Inputs (fields paddedBitsLen) _ _
+        (BitsBool.circuit paddedBitsLen) input input.padded
+        _
+        (by
+          intro env env' h_input
+          simp [circuit_norm] at h_input ⊢
+          exact h_input.2.2.2)
+        h_bits env env'
+    · intro j
+      let byteIndex : Fin paddedBytesLen := (Vector.finRange paddedBytesLen)[j.val]
+      apply @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses
+        (F p) _ Inputs CheckPaddedByte.Inputs _ _
+        (CheckPaddedByte.circuit byteIndex) input
+        ⟨input.messageLen, input.message, input.lenFlags, paddedWord input.padded byteIndex⟩
+      · intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        refine ⟨h_input.1, h_input.2.1, h_input.2.2.1, ?_⟩
+        intro a ha
+        simp [paddedWord] at ha
+        rcases ha with ⟨i, rfl⟩
+        exact h_input.2.2.2 _ (Vector.getElem_mem _)
+      · exact h_byte byteIndex
+  exact
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
 
 end CheckPad
 end Solution.SHA256

@@ -2,6 +2,7 @@ import Solution.SHA256.BitwiseOps
 import Solution.SHA256.Theorems
 import Solution.SHA256.Maj32Theorems
 import Challenge.Specs.SHA256
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime]
@@ -119,6 +120,62 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) Inputs (fields 32) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main maj32
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  and_intros
+  · intro _ h_input
+    simp [circuit_norm] at h_input
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn]
+    have ha :
+        Expression.eval env.toEnvironment input.a[i] =
+          Expression.eval env'.toEnvironment input.a[i] :=
+      h_input.1 _ (by simp)
+    have hb :
+        Expression.eval env.toEnvironment input.b[i] =
+          Expression.eval env'.toEnvironment input.b[i] :=
+      h_input.2.1 _ (by simp)
+    simp [ha, hb]
+  · intro h_agree h_input
+    simp [circuit_norm] at h_input
+    simp [Circuit.witnessVector, circuit_norm] at h_agree ⊢
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn]
+    have ht : env.get (offset + i) = env'.get (offset + i) :=
+      h_agree (offset + i) (by omega)
+    have ha :
+        Expression.eval env.toEnvironment input.a[i] =
+          Expression.eval env'.toEnvironment input.a[i] :=
+      h_input.1 _ (by simp)
+    have hb :
+        Expression.eval env.toEnvironment input.b[i] =
+          Expression.eval env'.toEnvironment input.b[i] :=
+      h_input.2.1 _ (by simp)
+    have hc :
+        Expression.eval env.toEnvironment input.c[i] =
+          Expression.eval env'.toEnvironment input.c[i] :=
+      h_input.2.2 _ (by simp)
+    simp [ht, ha, hb, hc]
+  · intro _
+    trivial
+  · intro _
+    trivial
 
 end Maj32
 end Solution.SHA256

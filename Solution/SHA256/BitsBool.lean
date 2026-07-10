@@ -1,4 +1,5 @@
 import Solution.SHA256.Common
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime]
@@ -55,6 +56,20 @@ def circuit (n : ℕ) [NeZero n] : FormalAssertion (F p) (fields n) :=
     soundness := by simp only [soundness]
     completeness := by simp only [completeness]
     exposedChannels_eq := by intro _ _ exposed h; simp at h }
+
+theorem computableWitnesses (n : ℕ) [NeZero n] : (circuit (p := p) n).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main n input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
+  intro _
+  trivial
 
 end BitsBool
 end Solution.SHA256

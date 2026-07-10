@@ -1,6 +1,7 @@
 import Solution.SHA256.BitwiseOps
 import Solution.SHA256.Theorems
 import Solution.SHA256.Add32Theorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [h_large : Fact (p > 2^33)]
@@ -259,6 +260,62 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit [Fact (p > 2^33)] : FormalCircuit (F p) Inputs (fields 32) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main add32
+  let zCircuit : Circuit (F p) (Var (fields 32) (F p)) := witnessVector 32 fun env =>
+      let s := (evalBitsNat env input.a + evalBitsNat env input.b) % 2^32
+      Vector.ofFn fun (i : Fin 32) => ((s / 2^i.val % 2 : ℕ) : F p)
+  let z := zCircuit.output offset
+  let coutCircuit : Circuit (F p) (Expression (F p)) := witnessField fun env =>
+    ((( evalBitsNat env input.a + evalBitsNat env input.b) / 2^32 % 2 : ℕ) : F p)
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessField_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  and_intros
+  · intro _ h_input
+    simp [circuit_norm] at h_input
+    have ha : evalBitsNat env input.a = evalBitsNat env' input.a := by
+      unfold evalBitsNat
+      apply Finset.sum_congr rfl
+      intro i _
+      exact congrArg (fun x : F p => x.val * 2^i.val)
+        (h_input.1 _ (Vector.getElem_mem i.isLt))
+    have hb : evalBitsNat env input.b = evalBitsNat env' input.b := by
+      unfold evalBitsNat
+      apply Finset.sum_congr rfl
+      intro i _
+      exact congrArg (fun x : F p => x.val * 2^i.val)
+        (h_input.2 _ (Vector.getElem_mem i.isLt))
+    simp [ha, hb]
+  · intro _ h_input
+    simp [circuit_norm] at h_input
+    have ha : evalBitsNat env input.a = evalBitsNat env' input.a := by
+      unfold evalBitsNat
+      apply Finset.sum_congr rfl
+      intro i _
+      exact congrArg (fun x : F p => x.val * 2^i.val)
+        (h_input.1 _ (Vector.getElem_mem i.isLt))
+    have hb : evalBitsNat env input.b = evalBitsNat env' input.b := by
+      unfold evalBitsNat
+      apply Finset.sum_congr rfl
+      intro i _
+      exact congrArg (fun x : F p => x.val * 2^i.val)
+        (h_input.2 _ (Vector.getElem_mem i.isLt))
+    simp [ha, hb]
+  · intro _
+    trivial
 
 end Add32
 end Solution.SHA256

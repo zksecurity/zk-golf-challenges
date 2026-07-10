@@ -1,5 +1,6 @@
 import Solution.SHA256.Xor32
 import Solution.SHA256.Theorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime]
@@ -68,6 +69,50 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) (fields 32) (fields 32) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main upperSigma0
+  let firstInput : Var Xor32.Inputs (F p) := ⟨rotr32 2 input, rotr32 13 input⟩
+  let first : Circuit (F p) (Var (fields 32) (F p)) := Xor32.circuit firstInput
+  let r1 := first.output offset
+  let n1 := offset + first.localLength offset
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  and_intros
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      Xor32.circuit input firstInput offset
+      (by
+        intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        constructor
+        · intro a ha
+          exact h_input a (by simpa [firstInput, rotr32, Vector.rotate] using ha)
+        · intro a ha
+          exact h_input a (by simpa [firstInput, rotr32, Vector.rotate] using ha))
+      Xor32.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      Xor32.circuit input ⟨r1, rotr32 22 input⟩ n1
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input
+        simp [circuit_norm]
+        constructor
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by
+              have hlen : first.localLength offset = 32 := by
+                dsimp [first, firstInput, Xor32.circuit]
+                rfl
+              omega)
+        · intro a ha
+          exact h_input a (by simpa [rotr32, Vector.rotate] using ha))
+      Xor32.computableWitnesses env env'
 
 end UpperSigma0
 end Solution.SHA256

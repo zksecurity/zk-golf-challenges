@@ -556,8 +556,99 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] :
           rw [this, Nat.div_eq_of_lt hvb_lt]
         exact (ZMod.val_eq_zero _).mp hval0
 
+omit [NeZero m] in
+/-- The witness generators read a limb vector only through the evaluation of its
+individual limbs; hence `evalValue` is invariant under environments that agree on
+those limbs. -/
+private lemma evalValue_congr (B : ℕ) {env env' : ProverEnvironment (F p)}
+    (x : Var (BigInt m) (F p))
+    (h : ∀ j, (hj : j < m) →
+      Expression.eval env.toEnvironment x[j] = Expression.eval env'.toEnvironment x[j]) :
+    evalValue B env x = evalValue B env' x := by
+  simp only [evalValue]
+  have hmap : Vector.map (Expression.eval env.toEnvironment) x
+      = Vector.map (Expression.eval env'.toEnvironment) x := by
+    apply Vector.ext; intro j hj; simp only [Vector.getElem_map]; exact h j hj
+  rw [hmap]
+
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.assertZero_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    implies_true]
+  refine ⟨?_, ?_, ?_, trivial, trivial, ?_⟩
+  · -- witness `d`: the generator reads the input only
+    simp only [circuit_norm]
+    intro _ h_input
+    have hlhs_j : ∀ x, (hx : x < m) →
+        Expression.eval env.toEnvironment input.lhs[x] = Expression.eval env'.toEnvironment input.lhs[x] := by
+      intro x hx
+      have hm := congrArg (fun s : Inputs m (F p) => s.lhs) h_input
+      simp only [circuit_norm] at hm
+      have := congrArg (fun v : Vector (F p) m => v[x]'hx) hm
+      simpa [Vector.getElem_map] using this
+    have hrhs_j : ∀ x, (hx : x < m) →
+        Expression.eval env.toEnvironment input.rhs[x] = Expression.eval env'.toEnvironment input.rhs[x] := by
+      intro x hx
+      have hm := congrArg (fun s : Inputs m (F p) => s.rhs) h_input
+      simp only [circuit_norm] at hm
+      have := congrArg (fun v : Vector (F p) m => v[x]'hx) hm
+      simpa [Vector.getElem_map] using this
+    simp only [evalValue_congr P.B input.rhs hrhs_j, evalValue_congr P.B input.lhs hlhs_j]
+  · -- Normalize subcircuit: input `d` is a previously-witnessed limb block
+    refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (Normalize.circuit P) input _ _ ?_
+      (Normalize.computableWitnesses P) env env'
+    intro k e1 e2 hle h_agree _
+    have hk : offset + m ≤ k := by
+      simp only [circuit_norm] at hle
+      omega
+    have hmem := eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk
+    simp only [circuit_norm]
+    apply Vector.ext
+    intro j hj
+    simp only [Vector.getElem_map]
+    exact hmem _ (Vector.getElem_mem hj)
+  · -- witness the carry chain: generator reads the input `a` and the below-offset `d`
+    intro h_agree h_input
+    simp only [circuit_norm] at h_agree ⊢
+    have hlhs_j : ∀ x, (hx : x < m) →
+        Expression.eval env.toEnvironment input.lhs[x] = Expression.eval env'.toEnvironment input.lhs[x] := by
+      intro x hx
+      have hm := congrArg (fun s : Inputs m (F p) => s.lhs) h_input
+      simp only [circuit_norm] at hm
+      have := congrArg (fun v : Vector (F p) m => v[x]'hx) hm
+      simpa [Vector.getElem_map] using this
+    have hget : ∀ x, x < m → env.get (offset + x) = env'.get (offset + x) := by
+      intro x hx; exact h_agree (offset + x) (by omega)
+    have eqa : ∀ x, (if h : x < m then ZMod.val (Expression.eval env.toEnvironment input.lhs[x]) else 0)
+        = (if h : x < m then ZMod.val (Expression.eval env'.toEnvironment input.lhs[x]) else 0) := by
+      intro x; split
+      · rename_i hx; rw [hlhs_j x hx]
+      · rfl
+    have eqd : ∀ x, (if h : x < m then ZMod.val (env.get (offset + x)) else 0)
+        = (if h : x < m then ZMod.val (env'.get (offset + x)) else 0) := by
+      intro x; split
+      · rename_i hx; rw [hget x hx]
+      · rfl
+    simp only [eqa, eqd]
+  · -- top-carry assertion (or `pure ()` when `m = 0`)
+    split <;> simp only [circuit_norm]
+
 end LessThan
 
 end
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
+

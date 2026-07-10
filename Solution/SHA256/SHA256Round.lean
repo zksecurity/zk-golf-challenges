@@ -4,6 +4,7 @@ import Solution.SHA256.Maj32
 import Solution.SHA256.UpperSigma0
 import Solution.SHA256.UpperSigma1
 import Challenge.Specs.SHA256
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime]
@@ -206,6 +207,178 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) Inputs SHA256State where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+attribute [local irreducible] main sha256Round
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main sha256Round
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  have hstate_eval : ∀ {env env' : ProverEnvironment (F p)} (i : Fin 8),
+      eval env input = eval env' input →
+      eval env input.state[i] = eval env' input.state[i] := by
+    intro env env' i h_input
+    simp [circuit_norm] at h_input
+    rw [CircuitType.eval_expression_prover_to_verifier env input.state[i],
+      CircuitType.eval_expression_prover_to_verifier env' input.state[i]]
+    have h := congrArg (fun s : SHA256State (F p) => s[i.val]'i.isLt) h_input.1
+    simpa [getElem_eval_vector] using h
+  have hstate_eq : ∀ {env env' : ProverEnvironment (F p)} (i : Fin 8),
+      eval env input = eval env' input →
+      ∀ a ∈ input.state[i], Expression.eval env.toEnvironment a =
+        Expression.eval env'.toEnvironment a := by
+    intro env env' i h_input a ha
+    simp [circuit_norm] at h_input
+    have hword : Vector.map (Expression.eval env.toEnvironment) input.state[i] =
+        Vector.map (Expression.eval env'.toEnvironment) input.state[i] := by
+      rw [← CircuitType.eval_var_fields env.toEnvironment (input.state[i]),
+        ← CircuitType.eval_var_fields env'.toEnvironment (input.state[i])]
+      have h := congrArg (fun s : SHA256State (F p) => s[i.val]'i.isLt) h_input.1
+      simpa [getElem_eval_vector] using h
+    simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨j, hj, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using Vector.ext_iff.mp hword j hj
+  have hk_eq : ∀ {env env' : ProverEnvironment (F p)},
+      eval env input = eval env' input →
+      ∀ a ∈ input.k, Expression.eval env.toEnvironment a =
+        Expression.eval env'.toEnvironment a := by
+    intro env env' h_input
+    simp [circuit_norm] at h_input
+    exact h_input.2.1
+  have hw_eq : ∀ {env env' : ProverEnvironment (F p)},
+      eval env input = eval env' input →
+      ∀ a ∈ input.w, Expression.eval env.toEnvironment a =
+        Expression.eval env'.toEnvironment a := by
+    intro env env' h_input
+    simp [circuit_norm] at h_input
+    exact h_input.2.2
+  have hgenerated_eq : ∀ {env env' : ProverEnvironment (F p)}
+      {start k : ℕ},
+      start + 32 ≤ k → env.AgreesBelow k env' →
+      ∀ a ∈ (varFromOffset (fields 32) start : Var (fields 32) (F p)),
+        Expression.eval env.toEnvironment a =
+          Expression.eval env'.toEnvironment a := by
+    intro env env' start k hle h_agree
+    exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+      (offset := start) (m := 32) h_agree hle
+  and_intros
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      UpperSigma1.circuit input input.state[4] offset
+      (by
+        intro env env' h_input
+        exact hstate_eval 4 h_input)
+      UpperSigma1.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      Ch32.circuit input ⟨input.state[4], input.state[5], input.state[6]⟩
+      (offset + (UpperSigma1.circuit (p := p)).localLength input.state[4])
+      (by
+        intro env env' h_input
+        simp [circuit_norm]
+        exact ⟨hstate_eq 4 h_input, hstate_eq 5 h_input, hstate_eq 6 h_input⟩)
+      Ch32.computableWitnesses env env'
+  · simpa [circuit_norm, UpperSigma1.circuit, UpperSigma1.elaborated,
+      Ch32.circuit, Ch32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨input.state[7], (varFromOffset (fields 32) (offset + 32) : Var (fields 32) (F p))⟩
+        (offset + 96)
+        (by
+          intro k env env' hle h_agree h_input
+          simp [circuit_norm]
+          exact ⟨hstate_eq 7 h_input, hgenerated_eq (start := offset + 32) (by omega) h_agree⟩)
+        Add32.computableWitnesses env env')
+  · simpa [circuit_norm, Add32.circuit, Add32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨(varFromOffset (fields 32) (offset + 96) : Var (fields 32) (F p)),
+          (varFromOffset (fields 32) (offset + 64) : Var (fields 32) (F p))⟩
+        (offset + 129)
+        (by
+          intro k env env' hle h_agree _h_input
+          simp [circuit_norm]
+          exact ⟨hgenerated_eq (start := offset + 96) (by omega) h_agree,
+            hgenerated_eq (start := offset + 64) (by omega) h_agree⟩)
+        Add32.computableWitnesses env env')
+  · simpa [circuit_norm, Add32.circuit, Add32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨(varFromOffset (fields 32) (offset + 129) : Var (fields 32) (F p)), input.k⟩
+        (offset + 162)
+        (by
+          intro k env env' hle h_agree h_input
+          simp [circuit_norm]
+          exact ⟨hgenerated_eq (start := offset + 129) (by omega) h_agree, hk_eq h_input⟩)
+        Add32.computableWitnesses env env')
+  · simpa [circuit_norm, Add32.circuit, Add32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨(varFromOffset (fields 32) (offset + 162) : Var (fields 32) (F p)), input.w⟩
+        (offset + 195)
+        (by
+          intro k env env' hle h_agree h_input
+          simp [circuit_norm]
+          exact ⟨hgenerated_eq (start := offset + 162) (by omega) h_agree, hw_eq h_input⟩)
+        Add32.computableWitnesses env env')
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      UpperSigma0.circuit input input.state[0] (offset + 228)
+      (by
+        intro env env' h_input
+        exact hstate_eval 0 h_input)
+      UpperSigma0.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      Maj32.circuit input ⟨input.state[0], input.state[1], input.state[2]⟩
+      (offset + 292)
+      (by
+        intro env env' h_input
+        simp [circuit_norm]
+        exact ⟨hstate_eq 0 h_input, hstate_eq 1 h_input, hstate_eq 2 h_input⟩)
+      Maj32.computableWitnesses env env'
+  · simpa [circuit_norm, UpperSigma0.circuit, UpperSigma0.elaborated,
+      Maj32.circuit, Maj32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨(varFromOffset (fields 32) (offset + 260) : Var (fields 32) (F p)),
+          (varFromOffset (fields 32) (offset + 324) : Var (fields 32) (F p))⟩
+        (offset + 356)
+        (by
+          intro k env env' hle h_agree _h_input
+          simp [circuit_norm]
+          exact ⟨hgenerated_eq (start := offset + 260) (by omega) h_agree,
+            hgenerated_eq (start := offset + 324) (by omega) h_agree⟩)
+        Add32.computableWitnesses env env')
+  · simpa [circuit_norm, Add32.circuit, Add32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨(varFromOffset (fields 32) (offset + 195) : Var (fields 32) (F p)),
+          (varFromOffset (fields 32) (offset + 356) : Var (fields 32) (F p))⟩
+        (offset + 389)
+        (by
+          intro k env env' hle h_agree _h_input
+          simp [circuit_norm]
+          exact ⟨hgenerated_eq (start := offset + 195) (by omega) h_agree,
+            hgenerated_eq (start := offset + 356) (by omega) h_agree⟩)
+        Add32.computableWitnesses env env')
+  · simpa [circuit_norm, Add32.circuit, Add32.elaborated] using
+      (Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        Add32.circuit input
+        ⟨input.state[3], (varFromOffset (fields 32) (offset + 195) : Var (fields 32) (F p))⟩
+        (offset + 422)
+        (by
+          intro k env env' hle h_agree h_input
+          simp [circuit_norm]
+          exact ⟨hstate_eq 3 h_input,
+            hgenerated_eq (start := offset + 195) (by omega) h_agree⟩)
+        Add32.computableWitnesses env env')
 
 end SHA256Round
 end Solution.SHA256

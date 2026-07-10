@@ -64,6 +64,50 @@ def circuit : FormalCircuit (F p) KeccakBitState KeccakBitState where
   soundness := soundness
   completeness := completeness
 
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.mapFinRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  intro j
+  refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+    ChiLane.circuit input
+    ⟨input[j.val], input[(chiSource1 j).val], input[(chiSource2 j).val]⟩ _ ?_
+    ChiLane.computableWitnesses env env'
+  intro e1 e2 h_input
+  simp [circuit_norm] at h_input ⊢
+  have hword : ∀ (k : ℕ) (hk : k < 25),
+      Vector.map (Expression.eval e1.toEnvironment) (input[k]'hk)
+        = Vector.map (Expression.eval e2.toEnvironment) (input[k]'hk) := by
+    intro k hk
+    rw [← CircuitType.eval_var_fields e1.toEnvironment (input[k]'hk),
+      ← CircuitType.eval_var_fields e2.toEnvironment (input[k]'hk),
+      getElem_eval_vector e1.toEnvironment input k hk,
+      getElem_eval_vector e2.toEnvironment input k hk]
+    exact congrArg (fun v : KeccakBitState (F p) => v[k]'hk) h_input
+  refine ⟨fun a ha => ?_, fun a ha => ?_, fun a ha => ?_⟩
+  · simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using
+      Vector.ext_iff.mp (hword j.val j.isLt) b hb
+  · simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using
+      Vector.ext_iff.mp (hword (chiSource1 j).val (chiSource1 j).isLt) b hb
+  · simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using
+      Vector.ext_iff.mp (hword (chiSource2 j).val (chiSource2 j).isLt) b hb
+
 end Chi
 end Solution.KeccakF1600
 end

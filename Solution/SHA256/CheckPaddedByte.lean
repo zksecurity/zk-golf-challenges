@@ -1,5 +1,6 @@
 import Solution.SHA256.PaddingTheorems
 import Solution.SHA256.CheckPaddedByteTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [h_large : Fact (p > 2^33)]
@@ -133,6 +134,18 @@ def circuit (j : Fin paddedBytesLen) : FormalAssertion (F p) Inputs :=
   { main := main j, elaborated := elaborated j, Assumptions, Spec := Spec j,
     soundness := soundness j, completeness := completeness j,
     exposedChannels_eq := by intro _ _ exposed h; simp at h }
+
+theorem computableWitnesses (j : Fin paddedBytesLen) :
+    (circuit (p := p) j).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main j input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  rw [Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
+  trivial
 
 end CheckPaddedByte
 end Solution.SHA256

@@ -5,7 +5,8 @@
         "Solution.AssertBytes.soundness",
         "Solution.AssertBytes.completeness",
         "Solution.AssertBytes.mainCost",
-        "Solution.AssertBytes.isR1CS"
+        "Solution.AssertBytes.isR1CS",
+        "Solution.AssertBytes.computableWitness"
     ],
     "definition_names": [
         "Solution.AssertBytes.main",

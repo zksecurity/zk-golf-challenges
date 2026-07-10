@@ -57,6 +57,50 @@ theorem completeness : Completeness (F p) main Assumptions := by
 def circuit : FormalCircuit (F p) Inputs (fields 64) where
   main; elaborated; Assumptions; Spec; soundness; completeness
 
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  let firstInput : Var AndLane.Inputs (F p) := ⟨notBits input.b, input.c⟩
+  let first : Circuit (F p) (Var (fields 64) (F p)) := AndLane.circuit firstInput
+  let r1 := first.output offset
+  let n1 := offset + first.localLength offset
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  and_intros
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      AndLane.circuit input firstInput offset
+      (by
+        intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        constructor
+        · intro a ha
+          simp only [firstInput, notBits, Vector.mem_map] at ha
+          obtain ⟨b, hb, rfl⟩ := ha
+          have heq := h_input.2.1 b hb
+          simp [Expression.eval, heq]
+        · exact h_input.2.2)
+      AndLane.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      XorLane.circuit input ⟨input.a, r1⟩ n1
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input
+        simp [circuit_norm]
+        constructor
+        · exact h_input.1
+        · have hlen : first.localLength offset = 64 := by
+            dsimp [first, firstInput, AndLane.circuit]
+            rfl
+          exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by omega))
+      XorLane.computableWitnesses env env'
+
 end ChiLane
 end Solution.KeccakF1600
 end

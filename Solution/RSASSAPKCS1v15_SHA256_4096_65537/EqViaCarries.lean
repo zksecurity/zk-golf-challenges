@@ -550,8 +550,78 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
           rw [show 2 * m - 1 - 1 = 2 * m - 2 from by omega, hwit_eq (2 * m - 2) (by omega), hCtop]
         rw [this]; ring
 
+/-- The carry witness generator reads the input coefficient sequence only through
+`evalPartial`, which depends on `env` only via the evaluation of the input limbs.
+Hence it is invariant under environments that agree on those limbs. -/
+private lemma evalPartial_congr {n : ℕ} (B : ℕ) {env env' : ProverEnvironment (F p)}
+    (x : Var (fields n) (F p))
+    (h : ∀ j, (hj : j < n) →
+      Expression.eval env.toEnvironment x[j] = Expression.eval env'.toEnvironment x[j])
+    (k : ℕ) :
+    evalPartial B env x k = evalPartial B env' x k := by
+  simp only [evalPartial]
+  apply Finset.sum_congr rfl
+  intro j _
+  split
+  · rename_i hj; rw [h j hj]
+  · rfl
+
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.assertZero_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    implies_true]
+  refine ⟨?_, ?_, trivial, ?_⟩
+  · -- witnessVector obligation: generator agrees when the inputs agree
+    intro _ h_input
+    have hlhs : eval env input.lhs = eval env' input.lhs := by
+      have := congrArg (fun s : Inputs m (F p) => s.lhs) h_input
+      simpa [circuit_norm] using this
+    have hrhs : eval env input.rhs = eval env' input.rhs := by
+      have := congrArg (fun s : Inputs m (F p) => s.rhs) h_input
+      simpa [circuit_norm] using this
+    have hlhs_j : ∀ j, (hj : j < 2 * m - 1) →
+        Expression.eval env.toEnvironment input.lhs[j] = Expression.eval env'.toEnvironment input.lhs[j] := by
+      intro j hj
+      rw [ProvableType.getElem_eval_fields_prover input.lhs j hj,
+          ProvableType.getElem_eval_fields_prover input.lhs j hj, hlhs]
+    have hrhs_j : ∀ j, (hj : j < 2 * m - 1) →
+        Expression.eval env.toEnvironment input.rhs[j] = Expression.eval env'.toEnvironment input.rhs[j] := by
+      intro j hj
+      rw [ProvableType.getElem_eval_fields_prover input.rhs j hj,
+          ProvableType.getElem_eval_fields_prover input.rhs j hj, hrhs]
+    simp only [evalPartial_congr P.B input.lhs hlhs_j, evalPartial_congr P.B input.rhs hrhs_j]
+  · -- forEach rangeCheck: each carry input is a previously-allocated witness var
+    intro i
+    refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (Gadgets.ToBits.rangeCheck P.W P.hW) input _ _ ?_
+      (rangeCheck_computableWitnesses P.W P.hW) env env'
+    intro k e1 e2 hle h_agree _
+    have hk : offset + (2 * m - 1) ≤ k := by
+      simp only [circuit_norm, Gadgets.ToBits.rangeCheck] at hle
+      omega
+    have hmem := eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk
+    rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover]
+    exact hmem _ (Vector.getElem_mem i.isLt)
+  · -- final top-carry assertion (or `pure ()` when 2m-1 = 0)
+    split
+    · simp only [Circuit.pure_structuralComputableWitnesses_iff]
+    · simp only [Circuit.assertZero_structuralComputableWitnesses_iff]
+
 end EqViaCarries
 
 end
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
+

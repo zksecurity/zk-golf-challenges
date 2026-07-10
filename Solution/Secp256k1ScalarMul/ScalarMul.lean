@@ -1,6 +1,7 @@
 import Solution.Secp256k1ScalarMul.Step
 import Solution.Secp256k1ScalarMul.ToBytes
 import Solution.Secp256k1ScalarMul.ScalarMulTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # secp256k1 variable-base scalar multiplication — reference circuit
@@ -205,5 +206,147 @@ def circuit : FormalCircuit (F circomPrime) Inputs Outputs where
   completeness := by simp only [completeness]
   exposedChannels_eq := by intro _ _ exposed h; simp at h
 
+/-! ## Computable witnesses -/
+
+/-- The output of the double-and-add fold at the top-level offset is the full
+`accVar` accumulator, `accVar offset scalarBits`. The step output offsets do not
+depend on the running accumulator, so the fold degenerates to `accVar`. -/
+lemma foldl_output_eq_accVar (offset : ℕ)
+    (bits : Vector (Expression (F circomPrime)) Specs.Secp256k1.scalarBits)
+    (px py : Emu (Expression (F circomPrime))) :
+    (Circuit.foldlRange Specs.Secp256k1.scalarBits infConst
+      (fun acc (i : Fin Specs.Secp256k1.scalarBits) =>
+        subcircuit Step.circuit
+          { acc := acc, px := px, py := py, bit := bits[i] })
+      (constantLength { bits := bits, px := px, py := py })).output offset
+      = accVar offset Specs.Secp256k1.scalarBits := by
+  rw [Circuit.foldlRange.output_eq]
+  simp only [circuit_norm]
+  simp only [step_output, step_localLength]
+  exact fin_foldl_eq_accVar offset Specs.Secp256k1.scalarBits
+
+attribute [local irreducible] main
+
+/-- Stability of a `ToBytes` subcircuit output, stated in the `circuit.output`
+form that appears after `circuit_norm` normalizes a `subcircuit` output. Crosses
+to `ToBytes.eval_output_of_agreesBelow` once via the cheap `elaborated.output_eq`
+so `exact` need not `whnf` the whole `ToBytes.main`. -/
+private lemma toBytes_output_stable (X : Var Emu (F circomPrime)) {o k : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : o + 288 ≤ k) :
+    eval env (ToBytes.circuit.output X o) = eval env' (ToBytes.circuit.output X o) := by
+  have h := ToBytes.eval_output_of_agreesBelow X (offset := o) h_agree (by
+    rw [toBytes_localLength]; exact hk)
+  rw [ToBytes.elaborated.output_eq X o] at h
+  exact h
+
+set_option maxRecDepth 8192 in
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  apply Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  show Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+    input env env' offset ((main input).operations offset)
+  have hstep : ∀ (X : Var Step.Inputs (F circomPrime)) (o : ℕ),
+      (subcircuit Step.circuit X).localLength o = 31959 := fun _ _ => rfl
+  have htb : ∀ (X : Var Emu (F circomPrime)) (o : ℕ),
+      (subcircuit ToBytes.circuit X).localLength o = 288 := fun _ _ => rfl
+  have hmux : ∀ (X : Var (Mux.Inputs (fields coordBytes)) (F circomPrime)) (o : ℕ),
+      (subcircuit (Mux.circuit (M := fields coordBytes)) X).localLength o = 32 := fun _ _ => rfl
+  have hfold : ∀ (o : ℕ),
+      (Circuit.foldlRange Specs.Secp256k1.scalarBits infConst
+        (fun acc (i : Fin Specs.Secp256k1.scalarBits) =>
+          subcircuit Step.circuit
+            { acc := acc, px := input.px, py := input.py, bit := input.bits[i] })
+        (constantLength input)).localLength o = 8181504 := by
+    intro o
+    simp only [Circuit.foldlRange.localLength_eq, Specs.Secp256k1.scalarBits, hstep, Nat.reduceMul]
+    rw [dif_pos (show (256 : ℕ) > 0 by norm_num)]
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.foldlRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    hstep, htb, hmux, hfold, and_true]
+  obtain ⟨bits, px, py⟩ := input
+  dsimp only []
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · -- loop body: Step at each fold index
+    intro i
+    rw [foldlAcc_eq_accVar_main offset px py bits i]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) Step.circuit _ _ _ ?_ Step.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    have hacc := eval_accVar_of_agreesBelow offset i.val
+      (ProverEnvironment.agreesBelow_of_le h_agree hle)
+    simp only [circuit_norm, Inputs.mk.injEq] at h_in
+    obtain ⟨hbits, hpx, hpy⟩ := h_in
+    have hbit : Expression.eval e.toEnvironment bits[i.val] =
+        Expression.eval e'.toEnvironment bits[i.val] := by
+      have := Vector.ext_iff.mp hbits i.val i.isLt
+      simpa only [Vector.getElem_map] using this
+    simp only [circuit_norm, Step.Inputs.mk.injEq, FlaggedPoint.mk.injEq] at hacc ⊢
+    exact ⟨⟨hacc.1, hacc.2.1, hacc.2.2⟩, hpx, hpy, hbit⟩
+  · -- ToBytes on acc.x
+    rw [foldl_output_eq_accVar offset bits px py]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) ToBytes.circuit _ (accVar offset Specs.Secp256k1.scalarBits).x
+      (offset + 8181504) ?_ ToBytes.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    exact eval_accVar_x_of_agreesBelow offset Specs.Secp256k1.scalarBits
+      (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
+  · -- ToBytes on acc.y
+    rw [foldl_output_eq_accVar offset bits px py]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) ToBytes.circuit _ (accVar offset Specs.Secp256k1.scalarBits).y
+      (offset + 8181504 + 288) ?_ ToBytes.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    exact eval_accVar_y_of_agreesBelow offset Specs.Secp256k1.scalarBits
+      (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
+  · -- Mux on the x bytes
+    rw [foldl_output_eq_accVar offset bits px py]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := fields coordBytes)) _
+      { selector := (accVar offset Specs.Secp256k1.scalarBits).isInf, ifTrue := zeroBytes,
+        ifFalse := (subcircuit ToBytes.circuit (accVar offset Specs.Secp256k1.scalarBits).x).output
+          (offset + 8181504) }
+      (offset + 8181504 + 288 + 288) ?_ (Mux.computableWitnesses (M := fields coordBytes)) env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Mux.Inputs.mk.injEq]
+    refine ⟨?_, ?_, ?_⟩
+    · exact eval_accVar_isInf_of_agreesBelow offset Specs.Secp256k1.scalarBits
+        (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
+    · apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
+    · have hxb := toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).x
+        (o := offset + 8181504) h_agree (by omega)
+      simp only [circuit_norm] at hxb ⊢
+      exact hxb
+  · -- Mux on the y bytes
+    rw [foldl_output_eq_accVar offset bits px py]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := fields coordBytes)) _
+      { selector := (accVar offset Specs.Secp256k1.scalarBits).isInf, ifTrue := zeroBytes,
+        ifFalse := (subcircuit ToBytes.circuit (accVar offset Specs.Secp256k1.scalarBits).y).output
+          (offset + 8181504 + 288) }
+      (offset + 8181504 + 288 + 288 + 32) ?_ (Mux.computableWitnesses (M := fields coordBytes)) env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Mux.Inputs.mk.injEq]
+    refine ⟨?_, ?_, ?_⟩
+    · exact eval_accVar_isInf_of_agreesBelow offset Specs.Secp256k1.scalarBits
+        (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
+    · apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
+    · have hyb := toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).y
+        (o := offset + 8181504 + 288) h_agree (by omega)
+      simp only [circuit_norm] at hyb ⊢
+      exact hyb
+
+theorem computableWitness : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+    Circuit.ComputableWitnesses (main input) n :=
+  Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (circuit := circuit.base) computableWitnesses
+
 end ScalarMul
 end Solution.Secp256k1ScalarMul
+

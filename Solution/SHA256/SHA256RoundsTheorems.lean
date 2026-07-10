@@ -1,4 +1,5 @@
 import Solution.SHA256.SHA256Round
+import Challenge.Utils.ComputableWitnessLemmas
 import Challenge.Specs.SHA256
 
 section
@@ -76,6 +77,65 @@ lemma foldlAcc_eq_stateVar (i₀ : ℕ)
         stateVar i₀ input_var_state k := by
   simp only [Circuit.FoldlM.foldlAcc, Vector.getElem_finRange]
   exact fin_foldl_eq_stateVar _ _ _
+
+lemma foldlAcc_eq_stateVar_main (i₀ : ℕ)
+    (input_var_state : SHA256State (Expression (F p)))
+    (input_var_schedule : SHA256Schedule (Expression (F p)))
+    (i : Fin 64) :
+    Circuit.FoldlM.foldlAcc (β := SHA256State (Expression (F p)))
+      i₀ (Vector.finRange 64)
+      (fun s i => subcircuit SHA256Round.circuit
+        { state := s,
+          k := constWord32 (Specs.SHA256.K[i].toNat),
+          w := input_var_schedule[i] })
+      input_var_state i =
+        stateVar i₀ input_var_state i.val := by
+  simpa only using foldlAcc_eq_stateVar i₀ input_var_state input_var_schedule i.val i.isLt
+
+omit [Fact (p > 2 ^ 33)] in
+lemma eval_mem_stateVar_of_agreesBelow {offset k : ℕ}
+    {env env' : ProverEnvironment (F p)}
+    {input_var_state : SHA256State (Expression (F p))}
+    (hk : k ≤ 64)
+    (h_agree : env.AgreesBelow (offset + k * 455) env')
+    (h_input_state : eval env.toEnvironment input_var_state =
+      eval env'.toEnvironment input_var_state) :
+    ∀ (j : ℕ) (hj : j < 8),
+      ∀ a ∈ (stateVar offset input_var_state k)[j]'hj,
+        Expression.eval env.toEnvironment a =
+          Expression.eval env'.toEnvironment a := by
+  induction k with
+  | zero =>
+      intro j hj a ha
+      have hword : Vector.map (Expression.eval env.toEnvironment) (input_var_state[j]'hj) =
+          Vector.map (Expression.eval env'.toEnvironment) (input_var_state[j]'hj) := by
+        rw [← CircuitType.eval_var_fields env.toEnvironment (input_var_state[j]'hj),
+          ← CircuitType.eval_var_fields env'.toEnvironment (input_var_state[j]'hj)]
+        have h := congrArg (fun s : SHA256State (F p) => s[j]'hj) h_input_state
+        simpa [getElem_eval_vector] using h
+      simp only [Vector.mem_iff_getElem] at ha
+      rcases ha with ⟨i, hi, hget⟩
+      rw [← hget]
+      simpa [Vector.getElem_map] using Vector.ext_iff.mp hword i hi
+  | succ k ih =>
+      intro j hj a ha
+      have hprev : env.AgreesBelow (offset + k * 455) env' :=
+        ProverEnvironment.agreesBelow_of_le h_agree (by omega)
+      have hj_cases : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 ∨
+          j = 4 ∨ j = 5 ∨ j = 6 ∨ j = 7 := by omega
+      rcases hj_cases with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      · simp [stateVar] at ha
+        exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+          (offset := offset + k * 455 + 389) (m := 32) h_agree (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 0 (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 1 (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 2 (by omega) a ha
+      · simp [stateVar] at ha
+        exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+          (offset := offset + k * 455 + 422) (m := 32) h_agree (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 4 (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 5 (by omega) a ha
+      · simpa [stateVar] using ih (by omega) hprev 6 (by omega) a ha
 
 omit [Fact (p > 2 ^ 33)] in
 /-- Helper: `constWord32 n` evaluated is always normalized (bits are 0 or 1). -/

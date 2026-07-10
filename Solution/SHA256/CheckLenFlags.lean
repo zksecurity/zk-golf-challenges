@@ -1,5 +1,6 @@
 import Solution.SHA256.Common
 import Solution.SHA256.CheckLenFlagsTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [h_large : Fact (p > 2^33)]
@@ -158,6 +159,17 @@ def circuit : FormalAssertion (F p) Inputs := {
   completeness := by simp only [completeness]
   exposedChannels_eq := by intro _ _ exposed h; simp at h
 }
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  unfold main
+  simp [Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition,
+    Circuit.bind_operations_eq, Operations.forAllFlat,
+    Operations.forAll_append, Circuit.forEach.forAll, Circuit.forAll, Circuit.operations,
+    Circuit.assertZero, Operations.forAll]
 
 end CheckLenFlags
 end Solution.SHA256

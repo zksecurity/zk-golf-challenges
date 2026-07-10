@@ -59,6 +59,79 @@ theorem completeness : Completeness (F p) main Assumptions := by
 def circuit : FormalCircuit (F p) Inputs (fields 64) where
   main; elaborated; Assumptions; Spec; soundness; completeness
 
+attribute [local irreducible] main
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  let firstInput : Var XorLane.Inputs (F p) := ⟨input.a, input.b⟩
+  let first : Circuit (F p) (Var (fields 64) (F p)) := XorLane.circuit firstInput
+  let n1 := offset + first.localLength offset
+  let t1 := first.output offset
+  let secondInput : Var XorLane.Inputs (F p) := ⟨t1, input.c⟩
+  let second : Circuit (F p) (Var (fields 64) (F p)) := XorLane.circuit secondInput
+  let n2 := n1 + second.localLength n1
+  let t2 := second.output n1
+  let thirdInput : Var XorLane.Inputs (F p) := ⟨t2, input.d⟩
+  let third : Circuit (F p) (Var (fields 64) (F p)) := XorLane.circuit thirdInput
+  let n3 := n2 + third.localLength n2
+  let t3 := third.output n2
+  have hlen1 : first.localLength offset = 64 := by
+    simp [first, firstInput, XorLane.circuit, circuit_norm]
+  have hlen2 : second.localLength n1 = 64 := by
+    simp [second, secondInput, XorLane.circuit, circuit_norm]
+  have hlen3 : third.localLength n2 = 64 := by
+    simp [third, thirdInput, XorLane.circuit, circuit_norm]
+  have hn1 : n1 = offset + 64 := by simp only [n1, hlen1]
+  have hn2 : n2 = n1 + 64 := by simp only [n2, hlen2]
+  have hn3 : n3 = n2 + 64 := by simp only [n3, hlen3]
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  and_intros
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      XorLane.circuit input ⟨input.a, input.b⟩ offset
+      (by
+        intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        exact ⟨h_input.1, h_input.2.1⟩)
+      XorLane.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      XorLane.circuit input ⟨t1, input.c⟩ n1
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        refine ⟨?_, ?_⟩
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by omega)
+        · exact h_input.2.2.1)
+      XorLane.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      XorLane.circuit input ⟨t2, input.d⟩ n2
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        refine ⟨?_, ?_⟩
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by omega)
+        · exact h_input.2.2.2.1)
+      XorLane.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      XorLane.circuit input ⟨t3, input.e⟩ n3
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        refine ⟨?_, ?_⟩
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by omega)
+        · exact h_input.2.2.2.2)
+      XorLane.computableWitnesses env env'
+
 end Xor5Lane
 end Solution.KeccakF1600
 end

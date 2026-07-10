@@ -5,7 +5,8 @@
         "Solution.RSASSAPKCS1v15_SHA256_4096_65537.soundness",
         "Solution.RSASSAPKCS1v15_SHA256_4096_65537.completeness",
         "Solution.RSASSAPKCS1v15_SHA256_4096_65537.mainCost",
-        "Solution.RSASSAPKCS1v15_SHA256_4096_65537.isR1CS"
+        "Solution.RSASSAPKCS1v15_SHA256_4096_65537.isR1CS",
+        "Solution.RSASSAPKCS1v15_SHA256_4096_65537.computableWitness"
     ],
     "definition_names": [
         "Solution.RSASSAPKCS1v15_SHA256_4096_65537.main",

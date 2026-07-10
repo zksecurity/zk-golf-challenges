@@ -42,6 +42,67 @@ theorem completeness :
   have := h_assumptions i
   rwa [← h_input, Vector.getElem_map] at this
 
+theorem computableWitness : ∀ n input,
+  ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+  Circuit.ComputableWitnesses (main input) n := by
+  intro n input hinput env env'
+  change (main input).operations n |>.forAllFlat n
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' n ((main input).operations n) := by
+    unfold main
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff]
+    intro i
+    exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_of_condition
+      (Num2Bits.circuit 8) input (input.buffer[i.val]) _
+      (by
+        intro k e1 e2 _ _ h_input
+        have h_buffer : (eval e1 input).buffer[i.val] = (eval e2 input).buffer[i.val] := by
+          rw [h_input]
+        simpa [circuit_norm] using h_buffer)
+      (Num2Bits.computableWitnesses 8) env env'
+  -- bridge the structural condition to the target `forAllFlat`, using `hinput`
+  have hflat :=
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
+  unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
+  rw [← Operations.forAll_toFlat_iff] at hflat ⊢
+  let targetCondition : Condition (F circomPrime) :=
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
+  have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
+      n ≤ off →
+      FlatOperation.forAll off
+        (Condition.implies
+          (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition
+            input env env')
+          targetCondition).ignoreSubcircuit
+        ops := by
+    intro ops off hoff
+    induction ops generalizing off with
+    | nil => simp [FlatOperation.forAll]
+    | cons op ops ih =>
+      cases op with
+      | witness m compute =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          constructor
+          · intro hparent hagree
+            exact hparent hagree
+              (hinput env env' (ProverEnvironment.agreesBelow_of_le hagree hoff))
+          · exact ih (m + off) (by omega)
+      | assert e =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | lookup l =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | interact i =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+  exact himplies ((main input).operations n).toFlat n (le_refl n)
+
 end
 
 section

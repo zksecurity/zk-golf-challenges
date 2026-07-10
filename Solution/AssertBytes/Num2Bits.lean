@@ -1,5 +1,6 @@
 import Clean.Circuit
 import Clean.Utils.Bits
+import Challenge.Utils.ComputableWitnessLemmas
 import Challenge.Instances.AssertBytes.Interface
 
 /-!
@@ -23,6 +24,7 @@ namespace Num2Bits
 
 open Challenge.Instances.AssertBytes.Interface
 open Utils.Bits
+open Challenge.Utils.ComputableWitnessLemmas
 
 /-- The `main` circuit: witness the `n` bits of `x`, boolean-constrain each bit
 (`bit · (bit − 1) = 0`), and assert the recomposition equals `x`. No output (it
@@ -98,6 +100,42 @@ def circuit (n : ℕ) : FormalAssertion (F circomPrime) field where
   Spec := Spec n
   soundness := soundness n
   completeness := completeness n
+
+theorem computableWitnesses (n : ℕ) : (circuit n).ComputableWitnesses := by
+  intro offset x env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition x env env')
+    ((main n x).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true, implies_true, forall_const]
+  -- only the witness-generator obligation survives; it reads only `x`
+  intro _ h_input
+  have h_eval : Expression.eval env.toEnvironment x =
+      Expression.eval env'.toEnvironment x := by
+    rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover] at h_input
+    exact h_input
+  simpa using congrArg (fieldToBits n) h_eval
+
+theorem computableWitness (n : ℕ) : ∀ offset x,
+    ProverEnvironment.OnlyAccessedBelow offset
+      (fun env : ProverEnvironment (F circomPrime) => eval env x) →
+    (main n x).ComputableWitnesses offset := by
+  exact FormalCircuitBase.computableWitnesses_implies (computableWitnesses n)
+
+theorem computableWitnesses_of_onlyAccessedBelow (n offset : ℕ)
+    (x : Expression (F circomPrime))
+    (hx : ProverEnvironment.OnlyAccessedBelow offset
+      (fun env : ProverEnvironment (F circomPrime) => eval env x)) :
+    (main n x).ComputableWitnesses offset :=
+  computableWitness n offset x hx
 
 end Num2Bits
 end Solution.AssertBytes

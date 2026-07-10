@@ -4,6 +4,7 @@ import Clean.Circuit.Loops
 import Clean.Gadgets.Bits
 import Clean.Gadgets.Equality
 import Clean.Utils.Tactics.ProvableStructDeriving
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA gadgets — shared definitions and theorems
@@ -990,5 +991,76 @@ lemma per_limb_lift {B : ℕ} (a d cin one b c : F p)
   exact this
 
 end
+
+/-! ## `ToBits` / `rangeCheck` computable witnesses
+
+The Clean library range-check gadget `Gadgets.ToBits.rangeCheck` (and the
+underlying `toBits` circuit) has computable witnesses: its only witness is
+`witnessVector n (fun env => fieldToBits n (x.eval env))`, whose generator reads
+just the gadget input `x`; the boolean and recomposition constraints are
+assertions and contribute nothing. These shared helpers are used by `Normalize`
+and `EqViaCarries`, both of which range-check limbs/carries with `rangeCheck`. -/
+
+section ToBitsComputableWitnesses
+open Challenge.Utils.ComputableWitnessLemmas
+open Utils.Bits
+variable {p : ℕ} [Fact p.Prime] [Fact (p > 2)]
+
+omit [Fact (p > 2)] in
+/-- The Clean library `toBits n hn` circuit has computable witnesses. -/
+theorem toBits_computableWitnesses (n : ℕ) (hn : 2 ^ n < p) :
+    (Gadgets.ToBits.toBits (p := p) n hn).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((Gadgets.ToBits.main n input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold Gadgets.ToBits.main
+  simp only [
+    HasAssertEq.assert_eq, Expression.assertEquals,
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true]
+  refine ⟨?_, ?_, ?_⟩
+  · intro _ h_input
+    simp only [circuit_norm] at h_input
+    rw [h_input]
+  · intro i
+    rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+    simp only [circuit_norm, FlatOperation.forAll,
+      FormalCircuitBase.computableWitnessCondition, and_true]
+  · rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll,
+      Operations.forAll_toFlat_iff]
+    simp only [Gadgets.Equality.main, Operations.forAllFlat, circuit_norm,
+      FormalCircuitBase.computableWitnessCondition]
+
+omit [Fact (p > 2)] in
+/-- The Clean library range-check assertion `rangeCheck n hn` has computable
+witnesses. Its `main` is `do let _ ← toBits n hn x`, so the only witnesses are
+those of the `toBits` subcircuit, discharged by `toBits_computableWitnesses`. -/
+theorem rangeCheck_computableWitnesses (n : ℕ) (hn : 2 ^ n < p) :
+    (Gadgets.ToBits.rangeCheck (p := p) n hn).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
+  unfold Gadgets.ToBits.rangeCheck
+  simp only [Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff, and_true]
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    [.subcircuit ((Gadgets.toBits n hn).toSubcircuit offset input)]
+  simp only [FormalCircuitBase.Operations.StructuralComputableWitnesses, and_true]
+  rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+  unfold GeneralFormalCircuit.toSubcircuit GeneralFormalCircuit.WithHint.toSubcircuit
+  rw [Operations.toNested_toFlat, Operations.forAll_toFlat_iff]
+  exact toBits_computableWitnesses n hn offset input env env'
+
+end ToBitsComputableWitnesses
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537

@@ -1,5 +1,6 @@
 import Solution.SHA256.SHA256Round
 import Solution.SHA256.SHA256RoundsTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 import Challenge.Specs.SHA256
 
 section
@@ -190,6 +191,87 @@ def circuit : FormalCircuit (F p) Inputs SHA256State := {
   main, elaborated, Assumptions, Spec, soundness
   completeness := by simp only [completeness]
 }
+
+attribute [local irreducible] main
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  have hschedule_eq : ∀ {env env' : ProverEnvironment (F p)} (i : Fin 64),
+      eval env input = eval env' input →
+      ∀ a ∈ input.schedule[i], Expression.eval env.toEnvironment a =
+        Expression.eval env'.toEnvironment a := by
+    intro env env' i h_input a ha
+    simp [circuit_norm] at h_input
+    have hword : Vector.map (Expression.eval env.toEnvironment) input.schedule[i] =
+        Vector.map (Expression.eval env'.toEnvironment) input.schedule[i] := by
+      rw [← CircuitType.eval_var_fields env.toEnvironment (input.schedule[i]),
+        ← CircuitType.eval_var_fields env'.toEnvironment (input.schedule[i])]
+      have h := congrArg (fun s : SHA256Schedule (F p) => s[i.val]'i.isLt) h_input.2
+      simpa [getElem_eval_vector] using h
+    simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨j, hj, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using Vector.ext_iff.mp hword j hj
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.foldlRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  intro i
+  have hacc :
+      Circuit.FoldlM.foldlAcc offset (Vector.finRange 64)
+        (fun s i =>
+          subcircuit SHA256Round.circuit
+            { state := s, k := constWord32 (Specs.SHA256.K[i].toNat),
+              w := input.schedule[i] })
+        input.state i =
+          stateVar offset input.state i.val := by
+    simpa only using foldlAcc_eq_stateVar_main offset input.state input.schedule i
+  rw [hacc]
+  exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+    SHA256Round.circuit input
+    ⟨stateVar offset input.state i.val,
+      constWord32 (p := p) (Specs.SHA256.K[i].toNat),
+      input.schedule[i]⟩
+    (offset + i.val * (SHA256Round.circuit (p := p)).localLength
+      ⟨stateVar offset input.state i.val,
+        constWord32 (p := p) (Specs.SHA256.K[i].toNat),
+        input.schedule[i]⟩)
+    (by
+      intro k env env' hle h_agree h_input
+      have hround : env.AgreesBelow (offset + i.val * 455) env' :=
+        ProverEnvironment.agreesBelow_of_le h_agree (by
+          simp [SHA256Round.circuit, circuit_norm] at hle
+          simpa [SHA256Round.circuit, circuit_norm] using hle)
+      simp [circuit_norm] at h_input ⊢
+      refine ⟨?_, ?_, ?_⟩
+      · apply Vector.ext
+        intro j hj
+        rw [← getElem_eval_vector env.toEnvironment (stateVar offset input.state i.val) j hj,
+          ← getElem_eval_vector env'.toEnvironment (stateVar offset input.state i.val) j hj]
+        apply Vector.ext
+        intro b hb
+        rw [← ProvableType.getElem_eval_fields env.toEnvironment
+            ((stateVar offset input.state i.val)[j]'hj) b hb,
+          ← ProvableType.getElem_eval_fields env'.toEnvironment
+            ((stateVar offset input.state i.val)[j]'hj) b hb]
+        exact eval_mem_stateVar_of_agreesBelow (offset := offset) (k := i.val)
+          (by omega) hround h_input.1 j hj
+          (((stateVar offset input.state i.val)[j]'hj)[b]'hb)
+          (Vector.getElem_mem _)
+      · intro a ha
+        simp only [Vector.mem_iff_getElem] at ha
+        rcases ha with ⟨j, hj, hget⟩
+        rw [← hget]
+        simp [constWord32, Expression.eval]
+      · exact hschedule_eq i (by
+          simp [circuit_norm]
+          exact ⟨h_input.1, h_input.2⟩))
+    SHA256Round.computableWitnesses env env'
 
 end SHA256Rounds
 end Solution.SHA256

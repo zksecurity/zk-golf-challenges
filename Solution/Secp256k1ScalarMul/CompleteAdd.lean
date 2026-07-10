@@ -2,6 +2,7 @@ import Solution.Secp256k1ScalarMul.AddMod
 import Solution.Secp256k1ScalarMul.SubMod
 import Solution.Secp256k1ScalarMul.DivOrZero
 import Solution.Secp256k1ScalarMul.CompleteAddTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # Complete secp256k1 point addition — `CompleteAdd`
@@ -224,6 +225,462 @@ flagged points. -/
 def circuit : FormalCircuit (F circomPrime) Inputs FlaggedPoint where
   main; elaborated; Assumptions; Spec; soundness; completeness
 
+/-! ## Computable witnesses
+
+`CompleteAdd` chains 22 subcircuits (`SubMod`/`AddMod`/`MulMod`/`IsZeroFe`/`Mux`/
+`DivOrZero`) plus one `<==` field assignment (`cancel`). Every witness generator
+is a deterministic function of the parent input and the prior subcircuit outputs,
+so the whole circuit is computable. Each subcircuit is discharged through its own
+`computableWitnesses` theorem; prior outputs are propagated with the producers'
+`eval_output_of_agreesBelow` lemmas at the concrete block offsets. -/
+
+private theorem toFlat_append (a b : Operations (F circomPrime)) :
+    (a ++ b).toFlat = a.toFlat ++ b.toFlat := by
+  induction a using Operations.induct with
+  | empty => simp [Operations.toFlat]
+  | witness _ _ _ ih | assert _ _ ih | lookup _ _ ih | interact _ _ ih =>
+    simp [Operations.toFlat, ih]
+  | subcircuit s _ ih => simp [Operations.toFlat, ih, List.append_assoc]
+
+private theorem toFlat_flatten (L : List (Operations (F circomPrime))) :
+    Operations.toFlat L.flatten = (L.map Operations.toFlat).flatten := by
+  induction L with
+  | nil => rfl
+  | cons a rest ih =>
+    rw [List.flatten_cons, toFlat_append, ih, List.map_cons, List.flatten_cons]
+
+private theorem flatStructural_of_no_witness
+    {Parent : TypeMap} [CircuitType Parent]
+    (parentInput : Var Parent (F circomPrime))
+    (env env' : ProverEnvironment (F circomPrime)) :
+    ∀ (ops : List (FlatOperation (F circomPrime))) (offset : ℕ),
+      (∀ x ∈ ops, match x with | .witness _ _ => False | _ => True) →
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.FlatOperation.StructuralComputableWitnesses
+        parentInput env env' offset ops := by
+  intro ops
+  induction ops with
+  | nil => intro offset _; trivial
+  | cons x rest ih =>
+    intro offset h
+    have h_rest : ∀ y ∈ rest, match y with | .witness _ _ => False | _ => True :=
+      fun y hy => h y (List.mem_cons_of_mem _ hy)
+    cases x with
+    | witness m c => exact absurd (h _ (List.mem_cons_self ..)) (by simp)
+    | assert e => exact ih offset h_rest
+    | lookup l => exact ih offset h_rest
+    | interact i => exact ih offset h_rest
+
+private lemma expression_stable_of_field_eval_eq
+    {env env' : ProverEnvironment (F circomPrime)}
+    {x : Expression (F circomPrime)}
+    (h : eval env x = eval env' x) :
+    Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x := by
+  rw [CircuitType.eval_expression_prover_to_verifier (M := field),
+    CircuitType.eval_expression_prover_to_verifier (M := field)] at h
+  rw [CircuitType.eval_var_field, CircuitType.eval_var_field] at h
+  exact h
+
+/-- The `<==` output is a fresh witness cell (offset `base`); its value depends
+only on `env` below `base + 1`, so it is stable across environments agreeing below
+any `k > base`. -/
+private lemma assignEq_output_eval_stable (r : Var field (F circomPrime)) {base k : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : base < k) :
+    Expression.eval env.toEnvironment
+        ((HasAssignEq.assignEq (β := field (Expression (F circomPrime))) r).output base) =
+      Expression.eval env'.toEnvironment
+        ((HasAssignEq.assignEq (β := field (Expression (F circomPrime))) r).output base) := by
+  simp only [circuit_norm, HasAssignEq.assignEq]
+  exact h_agree base hk
+
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  obtain ⟨P, Q⟩ := input
+  have hsub : ∀ (X : Var SubMod.Inputs (F circomPrime)) (o : ℕ),
+      (subcircuit SubMod.circuit X).localLength o = 1015 := fun _ _ => rfl
+  have hadd : ∀ (X : Var AddMod.Inputs (F circomPrime)) (o : ℕ),
+      (subcircuit AddMod.circuit X).localLength o = 1015 := fun _ _ => rfl
+  have hmul : ∀ (X : Var (MulMod.Inputs numLimbs) (F circomPrime)) (o : ℕ),
+      (subcircuit (MulMod.circuit secpParams) X).localLength o = 1306 := fun _ _ => rfl
+  have hdiv : ∀ (X : Var DivOrZero.Inputs (F circomPrime)) (o : ℕ),
+      (subcircuit DivOrZero.circuit X).localLength o = 1849 := fun _ _ => rfl
+  have hmxE : ∀ (X : Var (Mux.Inputs Emu) (F circomPrime)) (o : ℕ),
+      (subcircuit (Mux.circuit (M := Emu)) X).localLength o = 4 := fun _ _ => rfl
+  have hmxF : ∀ (X : Var (Mux.Inputs FlaggedPoint) (F circomPrime)) (o : ℕ),
+      (subcircuit (Mux.circuit (M := FlaggedPoint)) X).localLength o = 9 := fun _ _ => rfl
+  have hisz : ∀ (x : Var Emu (F circomPrime)) (o : ℕ),
+      (subcircuit IsZeroFe.circuit x).localLength o = 11 := fun _ _ => rfl
+  -- constant modulus limbs are environment-independent
+  have hpc : ∀ {e e' : ProverEnvironment (F circomPrime)},
+      Vector.map (Expression.eval e.toEnvironment) pConst
+        = Vector.map (Expression.eval e'.toEnvironment) pConst := by
+    intro e e'; rw [eval_pConst, eval_pConst]
+  -- an `IsZeroFe` output flag is stable across environments agreeing past its block
+  have iszOut : ∀ (x : Var Emu (F circomPrime)) {e e' : ProverEnvironment (F circomPrime)}
+      {O k' : ℕ}, e.AgreesBelow k' e' → O + 11 ≤ k' →
+      Expression.eval e.toEnvironment ((subcircuit IsZeroFe.circuit x).output O)
+        = Expression.eval e'.toEnvironment ((subcircuit IsZeroFe.circuit x).output O) := by
+    intro x e e' O k' hag hk
+    exact expression_stable_of_field_eval_eq (IsZeroFe.eval_output_of_agreesBelow x (offset := O) hag hk)
+  -- a product of two stable field expressions is stable
+  have mulStable : ∀ {e e' : ProverEnvironment (F circomPrime)} (a b : Expression (F circomPrime)),
+      Expression.eval e.toEnvironment a = Expression.eval e'.toEnvironment a →
+      Expression.eval e.toEnvironment b = Expression.eval e'.toEnvironment b →
+      Expression.eval e.toEnvironment (a * b) = Expression.eval e'.toEnvironment (a * b) := by
+    intro e e' a b ha hb
+    change Expression.eval e.toEnvironment (Expression.mul a b)
+      = Expression.eval e'.toEnvironment (Expression.mul a b)
+    rw [eval_mul, eval_mul, ha, hb]
+  -- concrete sizes so the `omega` offset bounds close
+  have hnl : numLimbs = 4 := rfl
+  have hsE : size Emu = 4 := rfl
+  have hsF : size FlaggedPoint = 9 := rfl
+  -- name each block's output at its concrete offset (mirrors `main`), so the
+  -- producers' `eval_output_of_agreesBelow` can be applied with explicit inputs
+  let dx : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := Q.x, b := P.x }).output offset
+  let dy : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := Q.y, b := P.y }).output (offset + 1015)
+  let sameX : Var field (F circomPrime) :=
+    (subcircuit IsZeroFe.circuit dx).output (offset + 1015 + 1015)
+  let sy : Var Emu (F circomPrime) :=
+    (subcircuit AddMod.circuit { a := P.y, b := Q.y }).output (offset + 1015 + 1015 + 11)
+  let oppY : Var field (F circomPrime) :=
+    (subcircuit IsZeroFe.circuit sy).output (offset + 1015 + 1015 + 11 + 1015)
+  let x1sq : Var Emu (F circomPrime) :=
+    (subcircuit (MulMod.circuit secpParams) { a := P.x, b := P.x, modulus := pConst }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11)
+  let x1sq2 : Var Emu (F circomPrime) :=
+    (subcircuit AddMod.circuit { a := x1sq, b := x1sq }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306)
+  let tNum : Var Emu (F circomPrime) :=
+    (subcircuit AddMod.circuit { a := x1sq2, b := x1sq }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015)
+  let tDen : Var Emu (F circomPrime) :=
+    (subcircuit AddMod.circuit { a := P.y, b := P.y }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015)
+  let num : Var Emu (F circomPrime) :=
+    (subcircuit (Mux.circuit (M := Emu)) { selector := sameX, ifTrue := tNum, ifFalse := dy }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015)
+  let den : Var Emu (F circomPrime) :=
+    (subcircuit (Mux.circuit (M := Emu)) { selector := sameX, ifTrue := tDen, ifFalse := dx }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4)
+  let lam : Var Emu (F circomPrime) :=
+    (subcircuit DivOrZero.circuit { num := num, den := den }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4)
+  let lamSq : Var Emu (F circomPrime) :=
+    (subcircuit (MulMod.circuit secpParams) { a := lam, b := lam, modulus := pConst }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849)
+  let xs : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := lamSq, b := P.x }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306)
+  let x3 : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := xs, b := Q.x }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015)
+  let xd : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := P.x, b := x3 }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015 + 1015)
+  let yprod : Var Emu (F circomPrime) :=
+    (subcircuit (MulMod.circuit secpParams) { a := lam, b := xd, modulus := pConst }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015 + 1015 + 1015)
+  let y3 : Var Emu (F circomPrime) :=
+    (subcircuit SubMod.circuit { a := yprod, b := P.y }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015 + 1015 + 1015 + 1306)
+  let cancel : Var field (F circomPrime) :=
+    (HasAssignEq.assignEq (sameX * oppY)).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015 + 1015 + 1015 + 1306 + 1015)
+  let finite : Var FlaggedPoint (F circomPrime) :=
+    { x := x3, y := y3, isInf := ((0 : F circomPrime) : Expression (F circomPrime)) }
+  let s1 : Var FlaggedPoint (F circomPrime) :=
+    (subcircuit (Mux.circuit (M := FlaggedPoint))
+      { selector := cancel, ifTrue := infConst, ifFalse := finite }).output
+      (offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849 + 1306 + 1015 + 1015 + 1015 + 1306 + 1015 + 1)
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    hsub, hadd, hmul, hdiv, hmxE, hmxF, hisz, and_true]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  -- 1. dx ← SubMod { Q.x, P.x }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨hPx, _, _⟩, hQx, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨hQx, hPx⟩
+  -- 2. dy ← SubMod { Q.y, P.y }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, hPy, _⟩, _, hQy, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨hQy, hPy⟩
+  -- 3. sameX ← IsZeroFe dx
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) IsZeroFe.circuit _
+      ((subcircuit SubMod.circuit { a := Q.x, b := P.x }).output offset) _ ?_
+      IsZeroFe.computableWitnesses env env'
+    intro k e e' hle h_agree _h_in
+    exact SubMod.eval_output_of_agreesBelow { a := Q.x, b := P.x } h_agree (by omega)
+  -- 4. sy ← AddMod { P.y, Q.y }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) AddMod.circuit _ _ _ ?_ AddMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, hPy, _⟩, _, hQy, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [AddMod.Inputs.mk.injEq]
+    exact ⟨hPy, hQy⟩
+  -- 5. oppY ← IsZeroFe sy
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) IsZeroFe.circuit _
+      ((subcircuit AddMod.circuit { a := P.y, b := Q.y }).output (offset + 1015 + 1015 + 11)) _ ?_
+      IsZeroFe.computableWitnesses env env'
+    intro k e e' hle h_agree _h_in
+    exact AddMod.eval_output_of_agreesBelow { a := P.y, b := Q.y } h_agree (by omega)
+  -- 6. x1sq ← MulMod { P.x, P.x, pConst }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (MulMod.circuit secpParams) _ _ _ ?_ (MulMod.computableWitnesses secpParams) env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨hPx, _, _⟩, _, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [MulMod.Inputs.mk.injEq]
+    exact ⟨hPx, hPx, hpc⟩
+  -- 7. x1sq2 ← AddMod { x1sq, x1sq }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) AddMod.circuit _ _ _ ?_ AddMod.computableWitnesses env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [AddMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (MulMod.eval_output_of_agreesBelow secpParams
+        { a := P.x, b := P.x, modulus := pConst } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (MulMod.eval_output_of_agreesBelow secpParams
+        { a := P.x, b := P.x, modulus := pConst } h_agree (by omega))⟩
+  -- 8. tNum ← AddMod { x1sq2, x1sq }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) AddMod.circuit _ _ _ ?_ AddMod.computableWitnesses env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [AddMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (AddMod.eval_output_of_agreesBelow { a := x1sq, b := x1sq } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (MulMod.eval_output_of_agreesBelow secpParams
+        { a := P.x, b := P.x, modulus := pConst } h_agree (by omega))⟩
+  -- 9. tDen ← AddMod { P.y, P.y }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) AddMod.circuit _ _ _ ?_ AddMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, hPy, _⟩, _, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [AddMod.Inputs.mk.injEq]
+    exact ⟨hPy, hPy⟩
+  -- 10. num ← Mux { sameX, tNum, dy }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := Emu)) _ _ _ ?_ (Mux.computableWitnesses (M := Emu)) env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [Mux.Inputs.mk.injEq]
+    exact ⟨iszOut dx h_agree (by omega),
+      emu_map_eval_eq_of_eval_eq (AddMod.eval_output_of_agreesBelow { a := x1sq2, b := x1sq } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := Q.y, b := P.y } h_agree (by omega))⟩
+  -- 11. den ← Mux { sameX, tDen, dx }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := Emu)) _ _ _ ?_ (Mux.computableWitnesses (M := Emu)) env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [Mux.Inputs.mk.injEq]
+    exact ⟨iszOut dx h_agree (by omega),
+      emu_map_eval_eq_of_eval_eq (AddMod.eval_output_of_agreesBelow { a := P.y, b := P.y } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := Q.x, b := P.x } h_agree (by omega))⟩
+  -- 12. lam ← DivOrZero { num, den }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) DivOrZero.circuit _ _ _ ?_ DivOrZero.computableWitnesses env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [DivOrZero.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (Mux.eval_output_of_agreesBelow (M := Emu)
+        { selector := sameX, ifTrue := tNum, ifFalse := dy } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (Mux.eval_output_of_agreesBelow (M := Emu)
+        { selector := sameX, ifTrue := tDen, ifFalse := dx } h_agree (by omega))⟩
+  -- 13. lamSq ← MulMod { lam, lam, pConst }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (MulMod.circuit secpParams) _ _ _ ?_ (MulMod.computableWitnesses secpParams) env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [MulMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (DivOrZero.eval_output_of_agreesBelow { num := num, den := den } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (DivOrZero.eval_output_of_agreesBelow { num := num, den := den } h_agree (by omega)), hpc⟩
+  -- 14. xs ← SubMod { lamSq, P.x }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨hPx, _, _⟩, _, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (MulMod.eval_output_of_agreesBelow secpParams
+      { a := lam, b := lam, modulus := pConst } h_agree (by omega)), hPx⟩
+  -- 15. x3 ← SubMod { xs, Q.x }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, _, _⟩, hQx, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := lamSq, b := P.x } h_agree (by omega)), hQx⟩
+  -- 16. xd ← SubMod { P.x, x3 }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨hPx, _, _⟩, _, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨hPx, emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := xs, b := Q.x } h_agree (by omega))⟩
+  -- 17. yprod ← MulMod { lam, xd, pConst }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (MulMod.circuit secpParams) _ _ _ ?_ (MulMod.computableWitnesses secpParams) env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at ⊢; rw [MulMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (DivOrZero.eval_output_of_agreesBelow { num := num, den := den } h_agree (by omega)),
+      emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := P.x, b := x3 } h_agree (by omega)), hpc⟩
+  -- 18. y3 ← SubMod { yprod, P.y }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) SubMod.circuit _ _ _ ?_ SubMod.computableWitnesses env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, hPy, _⟩, _, _, _⟩ := h_in
+    simp only [circuit_norm] at ⊢; rw [SubMod.Inputs.mk.injEq]
+    exact ⟨emu_map_eval_eq_of_eval_eq (MulMod.eval_output_of_agreesBelow secpParams
+      { a := lam, b := xd, modulus := pConst } h_agree (by omega)), hPy⟩
+  -- 19. cancel <== sameX * oppY (ProvableType witness + `===` equality assertion)
+  · simp only [HasAssignEq.assignEq,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.provableWitness_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+      and_true]
+    refine ⟨?_, ?_⟩
+    · -- the witnessed cancellation flag `sameX * oppY` is stable
+      intro h_agree _h_in
+      rw [CircuitType.eval_expression_prover_to_verifier (M := field),
+        CircuitType.eval_expression_prover_to_verifier (M := field),
+        CircuitType.eval_var_field, CircuitType.eval_var_field]
+      exact mulStable _ _
+        (iszOut dx (O := offset + 1015 + 1015) h_agree (by omega))
+        (iszOut sy (O := offset + 1015 + 1015 + 11 + 1015) h_agree (by omega))
+    · -- the `===` equality assertion carries no witnesses
+      simp only [HasAssertEq.assert_eq, assertEquals,
+        Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff]
+      apply flatStructural_of_no_witness
+      simp only [Gadgets.Equality.circuit, Gadgets.Equality.main]
+      intro x hx
+      rw [Circuit.forEach.operations_eq, toFlat_flatten, List.map_ofFn, List.mem_flatten] at hx
+      obtain ⟨l, hl, hxl⟩ := hx
+      rw [List.mem_ofFn] at hl
+      obtain ⟨i, rfl⟩ := hl
+      simp only [Function.comp, Circuit.assertZero, circuit_norm, Operations.toFlat,
+        List.mem_cons, List.not_mem_nil, or_false] at hxl
+      subst hxl
+      trivial
+  -- 20. s1 ← Mux { cancel, infConst, finite (x3, y3, 0) }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := FlaggedPoint)) _ _ _ ?_
+      (Mux.computableWitnesses (M := FlaggedPoint)) env env'
+    intro k e e' hle h_agree _h_in
+    simp only [circuit_norm] at hle
+    simp only [circuit_norm] at ⊢
+    rw [Mux.Inputs.mk.injEq]
+    refine ⟨?_, ?_, ?_⟩
+    · -- selector = cancel, a fresh witness cell
+      exact assignEq_output_eval_stable (sameX * oppY)
+        (base := offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849
+          + 1306 + 1015 + 1015 + 1015 + 1306 + 1015) h_agree (by omega)
+    · -- ifTrue = infConst (constant point at infinity)
+      rw [FlaggedPoint.mk.injEq]
+      refine ⟨?_, ?_, ?_⟩
+      · simp only [infConst]; rw [DivOrZero.eval_zeroConst, DivOrZero.eval_zeroConst]
+      · simp only [infConst]; rw [DivOrZero.eval_zeroConst, DivOrZero.eval_zeroConst]
+      · simp only [infConst, Expression.eval]
+    · -- ifFalse = finite (x3, y3, 0)
+      rw [FlaggedPoint.mk.injEq]
+      refine ⟨?_, ?_, ?_⟩
+      · exact emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := xs, b := Q.x } h_agree (by omega))
+      · exact emu_map_eval_eq_of_eval_eq (SubMod.eval_output_of_agreesBelow { a := yprod, b := P.y } h_agree (by omega))
+      · rfl
+  -- 21. s2 ← Mux { Q.isInf, P, s1 }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := FlaggedPoint)) _ _ _ ?_
+      (Mux.computableWitnesses (M := FlaggedPoint)) env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm] at hle
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨hPx, hPy, hPi⟩, _, _, hQi⟩ := h_in
+    simp only [circuit_norm] at ⊢
+    rw [Mux.Inputs.mk.injEq]
+    refine ⟨hQi, ?_, ?_⟩
+    · -- ifTrue = P (raw input point)
+      rw [FlaggedPoint.mk.injEq]; exact ⟨hPx, hPy, hPi⟩
+    · -- ifFalse = s1, a fresh `Mux` witness block
+      have hs1 := Mux.eval_output_of_agreesBelow (M := FlaggedPoint)
+        { selector := cancel, ifTrue := infConst, ifFalse := finite }
+        (offset := offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849
+          + 1306 + 1015 + 1015 + 1015 + 1306 + 1015 + 1) h_agree (by omega)
+      simp only [circuit_norm] at hs1
+      exact hs1
+  -- 22. out ← Mux { P.isInf, Q, s2 }
+  · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (Parent := Inputs) (Mux.circuit (M := FlaggedPoint)) _ _ _ ?_
+      (Mux.computableWitnesses (M := FlaggedPoint)) env env'
+    intro k e e' hle h_agree h_in
+    simp only [circuit_norm] at hle
+    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
+    obtain ⟨⟨_, _, hPi⟩, hQx, hQy, hQi⟩ := h_in
+    simp only [circuit_norm] at ⊢
+    rw [Mux.Inputs.mk.injEq]
+    refine ⟨hPi, ?_, ?_⟩
+    · -- ifTrue = Q (raw input point)
+      rw [FlaggedPoint.mk.injEq]; exact ⟨hQx, hQy, hQi⟩
+    · -- ifFalse = s2, a fresh `Mux` witness block
+      have hs2 := Mux.eval_output_of_agreesBelow (M := FlaggedPoint)
+        { selector := Q.isInf, ifTrue := P, ifFalse := s1 }
+        (offset := offset + 1015 + 1015 + 11 + 1015 + 11 + 1306 + 1015 + 1015 + 1015 + 4 + 4 + 1849
+          + 1306 + 1015 + 1015 + 1015 + 1306 + 1015 + 1 + 9) h_agree (by omega)
+      simp only [circuit_norm] at hs2
+      exact hs2
+
+theorem computableWitness : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+    Circuit.ComputableWitnesses (main input) n :=
+  Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (circuit := circuit.base) computableWitnesses
+
+/-- A fresh `FlaggedPoint` witness block reads only its own `size FlaggedPoint`
+cells, so it is stable across environments agreeing below `off + size FlaggedPoint`. -/
+private lemma fpVar_stable {off k : ℕ} {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : off + size FlaggedPoint ≤ k) :
+    eval env ((varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))))
+      = eval env' ((varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime)))) := by
+  rw [CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint),
+    CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint), ProvableType.ext_iff]
+  intro i hi
+  rw [← ProvableType.getElem_eval_toElements
+      (varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))) i hi,
+    ← ProvableType.getElem_eval_toElements
+      (varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))) i hi]
+  simp only [varFromOffset, ProvableType.toElements_fromElements, Vector.getElem_mapRange,
+    Expression.eval]
+  exact h_agree (off + i) (by omega)
+
+/-- The output of `CompleteAdd.main` is the final `Mux` witness block (the flagged
+point `out`), allocated at `offset + 15966` and reading only its `size FlaggedPoint = 9`
+cells. Environments agreeing below any `k ≥ offset + 15975` (the full local length)
+evaluate the output identically. Consumed by `Step`. -/
+lemma eval_output_of_agreesBelow (input : Var Inputs (F circomPrime)) {offset k : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : offset + 15975 ≤ k) :
+    eval env ((main input).output offset) = eval env' ((main input).output offset) := by
+  rw [elaborated.output_eq input offset]
+  have hsz : size FlaggedPoint = 9 := rfl
+  exact fpVar_stable (off := offset + 15966) h_agree (by rw [hsz]; omega)
+
 end CompleteAdd
 end Solution.Secp256k1ScalarMul
-

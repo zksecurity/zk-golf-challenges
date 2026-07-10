@@ -1,4 +1,5 @@
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Theorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA big-integer equality gadget — `Equal`
@@ -62,8 +63,24 @@ def circuit (P : BigIntParams p m) : FormalAssertion (F p) (Inputs m) where
     simp only [← h_input] at h_assumptions h_spec
     exact BigInt.value_inj h_assumptions.1 h_assumptions.2 h_spec
 
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses (P : BigIntParams p m) : (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [HasAssertEq.assert_eq, assertEquals,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff]
+  rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll,
+    Operations.forAll_toFlat_iff]
+  simp only [Gadgets.Equality.main, Operations.forAllFlat, circuit_norm,
+    FormalCircuitBase.computableWitnessCondition]
+
 end Equal
 
 end
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
+

@@ -72,6 +72,45 @@ def circuit : FormalCircuit (F p) KeccakBitState KeccakBitRow where
   soundness := soundness
   completeness := completeness
 
+attribute [local irreducible] main
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.mapFinRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  intro x
+  refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+    Xor5Lane.circuit input
+    ⟨input[x.val], input[x.val + 5], input[x.val + 10], input[x.val + 15], input[x.val + 20]⟩
+    _ ?_ Xor5Lane.computableWitnesses env env'
+  intro e1 e2 h_input
+  simp [circuit_norm] at h_input ⊢
+  have hword : ∀ (j : ℕ) (hj : j < 25),
+      Vector.map (Expression.eval e1.toEnvironment) (input[j]'hj)
+        = Vector.map (Expression.eval e2.toEnvironment) (input[j]'hj) := by
+    intro j hj
+    rw [← CircuitType.eval_var_fields e1.toEnvironment (input[j]'hj),
+      ← CircuitType.eval_var_fields e2.toEnvironment (input[j]'hj),
+      getElem_eval_vector e1.toEnvironment input j hj,
+      getElem_eval_vector e2.toEnvironment input j hj]
+    exact congrArg (fun v : KeccakBitState (F p) => v[j]'hj) h_input
+  have hmem : ∀ (j : ℕ) (hj : j < 25),
+      ∀ a ∈ (input[j]'hj), Expression.eval e1.toEnvironment a = Expression.eval e2.toEnvironment a := by
+    intro j hj a ha
+    simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using Vector.ext_iff.mp (hword j hj) b hb
+  exact ⟨hmem _ (by omega), hmem _ (by omega), hmem _ (by omega),
+    hmem _ (by omega), hmem _ (by omega)⟩
+
 end ThetaC
 end Solution.KeccakF1600
 end

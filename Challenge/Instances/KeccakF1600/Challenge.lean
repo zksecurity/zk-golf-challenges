@@ -19,6 +19,10 @@ theorem completeness : GeneralFormalCircuit.Completeness (F circomPrime) main Pr
 theorem mainCost : Challenge.CostR1CS.circuitCost main ⟨allocations, constraints⟩ := sorry
 theorem isR1CS : Challenge.CostR1CS.isR1CS main := sorry
 
+theorem computableWitness : ∀ n input,
+  ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+  Circuit.ComputableWitnesses (main input) n := sorry
+
 def formalCircuit : GeneralFormalCircuit (F circomPrime) Input Output :=
   {
     main := main

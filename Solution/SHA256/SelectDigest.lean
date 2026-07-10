@@ -1,6 +1,7 @@
 import Solution.SHA256.PaddingTheorems
 import Solution.SHA256.Theorems
 import Solution.SHA256.SelectDigestTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [h_large : Fact (p > 2^33)]
@@ -165,6 +166,91 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) Inputs (fields 8) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+attribute [local irreducible] main
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  and_intros
+  · intro _ h_input
+    simp [circuit_norm] at h_input
+    have estate : ∀ sv : SHA256State (Expression (F p)),
+        eval env.toEnvironment sv = eval env'.toEnvironment sv →
+        sv.map (Vector.map (Expression.eval env.toEnvironment)) =
+          sv.map (Vector.map (Expression.eval env'.toEnvironment)) := by
+      intro sv h
+      calc
+        sv.map (Vector.map (Expression.eval env.toEnvironment)) = eval env.toEnvironment sv := by
+          rw [eval_vector]
+          apply Vector.ext
+          intro i hi
+          rw [Vector.getElem_map, Vector.getElem_map, CircuitType.eval_var_fields]
+        _ = eval env'.toEnvironment sv := h
+        _ = sv.map (Vector.map (Expression.eval env'.toEnvironment)) := by
+          rw [eval_vector]
+          apply Vector.ext
+          intro i hi
+          rw [Vector.getElem_map, Vector.getElem_map, CircuitType.eval_var_fields]
+    have hword : ∀ (w : Fin 8) (len : Fin inputBufferLen),
+        Expression.eval env.toEnvironment (selectedWordExpr input w len) =
+          Expression.eval env'.toEnvironment (selectedWordExpr input w len) := by
+      intro w len
+      have hstates :
+          (statesVec input).map (fun st =>
+              st.map (Vector.map (Expression.eval env.toEnvironment))) =
+            (statesVec input).map (fun st =>
+              st.map (Vector.map (Expression.eval env'.toEnvironment))) := by
+        simp only [statesVec, Vector.map_mk, List.map_toArray, List.map_cons,
+          List.map_nil,
+          estate input.s1 h_input.2.2.1,
+          estate input.s2 h_input.2.2.2.1,
+          estate input.s3 h_input.2.2.2.2.1,
+          estate input.s4 h_input.2.2.2.2.2.1,
+          estate input.s5 h_input.2.2.2.2.2.2]
+      have hselected :=
+        congrArg (fun v : Vector (SHA256State (F p)) paddedBlocksLen =>
+          (stateForLen v len.val)[w]) hstates
+      have hselected' :
+          ((stateForLen (statesVec input) len.val)[w]).map
+              (Expression.eval env.toEnvironment) =
+            ((stateForLen (statesVec input) len.val)[w]).map
+              (Expression.eval env'.toEnvironment) := by
+        simp only [stateForLen_map] at hselected
+        change
+          (Vector.map (Vector.map (Expression.eval env.toEnvironment))
+            (stateForLen (statesVec input) len.val))[w.val]'w.isLt =
+          (Vector.map (Vector.map (Expression.eval env'.toEnvironment))
+            (stateForLen (statesVec input) len.val))[w.val]'w.isLt at hselected
+        rw [Vector.getElem_map, Vector.getElem_map] at hselected
+        exact hselected
+      simp only [selectedWordExpr, fromBitsExpr, Utils.Bits.fieldFromBits_eval]
+      exact congrArg Utils.Bits.fieldFromBits hselected'
+    apply Vector.ext
+    intro w hw
+    simp only [Vector.getElem_ofFn]
+    unfold selectedDigestExpr
+    rw [eval_finFoldl_add, eval_finFoldl_add]
+    apply Finset.sum_congr rfl
+    intro len _
+    simp only [Expression.eval]
+    congr 1
+    · exact h_input.2.1 input.lenFlags[len] (Vector.getElem_mem _)
+    · exact hword ⟨w, hw⟩ len
+  · intro _ _
+    trivial
 
 end SelectDigest
 end Solution.SHA256

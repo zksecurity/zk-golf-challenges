@@ -1,5 +1,6 @@
 import Solution.Secp256k1ScalarMul.Normalize
 import Solution.Secp256k1ScalarMul.Equal
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA big-integer comparison (gadget G2)
@@ -555,6 +556,119 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] :
             rw [hPlast, show m - 1 + 1 = m from by omega]
           rw [this, Nat.div_eq_of_lt hvb_lt]
         exact (ZMod.val_eq_zero _).mp hval0
+
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.provableWitness_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
+  and_intros
+  · intro _ h_input
+    have hlhs : evalValue P.B env input.lhs = evalValue P.B env' input.lhs := by
+      have h_lhs : eval env input.lhs = eval env' input.lhs := by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.lhs) h_input
+      have h_vec :
+          input.lhs.map (Expression.eval env.toEnvironment) =
+            input.lhs.map (Expression.eval env'.toEnvironment) := by
+        simpa [CircuitType.eval_expression_prover_to_verifier, CircuitType.eval_expression,
+          ProvableType.eval, explicit_provable_type] using h_lhs
+      simp [evalValue, h_vec]
+    have hrhs : evalValue P.B env input.rhs = evalValue P.B env' input.rhs := by
+      have h_rhs : eval env input.rhs = eval env' input.rhs := by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.rhs) h_input
+      have h_vec :
+          input.rhs.map (Expression.eval env.toEnvironment) =
+            input.rhs.map (Expression.eval env'.toEnvironment) := by
+        simpa [CircuitType.eval_expression_prover_to_verifier, CircuitType.eval_expression,
+          ProvableType.eval, explicit_provable_type] using h_rhs
+      simp [evalValue, h_vec]
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn, hlhs, hrhs]
+  · apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+    · intro k env env' hk h_agree _
+      apply Vector.ext
+      intro i hi
+      rw [← ProvableType.getElem_eval_fields_prover (env := env) _ i hi,
+        ← ProvableType.getElem_eval_fields_prover (env := env') _ i hi]
+      simp only [Circuit.output, ProvableType.witness, ProvableType.varFromOffset_fields,
+        Vector.getElem_mapRange, Expression.eval]
+      exact h_agree (offset + i) (by
+        have hk' : offset + m ≤ k := by
+          simpa [ProvableType.witness, Circuit.localLength, size] using hk
+        omega)
+    · exact Normalize.computableWitnesses P
+  · intro h_agree h_input
+    ext i
+    simp only [Vector.getElem_ofFn]
+    apply congrArg (fun n : ℕ => (n : F p))
+    apply congrArg (fun s => ((1 + s) / 2 ^ (P.B * (i + 1)) : ℕ))
+    apply Finset.sum_congr rfl
+    intro j hj
+    rw [Finset.mem_range] at hj
+    have hjm : j < m := by omega
+    simp only [dif_pos hjm]
+    have hlhs :
+        ZMod.val (Expression.eval env.toEnvironment input.lhs[j]) =
+          ZMod.val (Expression.eval env'.toEnvironment input.lhs[j]) := by
+      apply congrArg ZMod.val
+      have h_lhs : eval env input.lhs = eval env' input.lhs := by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.lhs) h_input
+      have h : (eval env input.lhs)[j] = (eval env' input.lhs)[j] := by
+        simpa only using congrArg (fun x : BigInt m (F p) => x[j]) h_lhs
+      rw [← ProvableType.getElem_eval_fields_prover (env := env) input.lhs j hjm,
+        ← ProvableType.getElem_eval_fields_prover (env := env') input.lhs j hjm] at h
+      exact h
+    have hd :
+        ZMod.val
+          (Expression.eval env.toEnvironment
+            ((ProvableType.witness (α := BigInt m) fun env =>
+                    Vector.ofFn fun k : Fin m =>
+                      (((evalValue P.B env input.rhs - 1 - evalValue P.B env input.lhs) /
+                        2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)).output
+                offset)[j]) =
+        ZMod.val
+          (Expression.eval env'.toEnvironment
+            ((ProvableType.witness (α := BigInt m) fun env =>
+                    Vector.ofFn fun k : Fin m =>
+                      (((evalValue P.B env input.rhs - 1 - evalValue P.B env input.lhs) /
+                        2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)).output
+                offset)[j]) := by
+      apply congrArg ZMod.val
+      rw [Circuit.output, ProvableType.witness]
+      simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange, Expression.eval]
+      exact h_agree (offset + j) (by
+        have hdlen :
+            (ProvableType.witness (α := BigInt m) fun env =>
+              (Vector.ofFn fun k : Fin m =>
+                (((evalValue P.B env input.rhs - 1 - evalValue P.B env input.lhs) /
+                  2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p))).localLength offset = m := by
+          simp [ProvableType.witness, Circuit.localLength, Operations.localLength, size]
+        omega)
+    rw [hlhs, hd]
+  · intro _
+    trivial
+  · intro _
+    trivial
+  · split <;> trivial
+
+theorem computableWitness (P : BigIntParams p m) [Fact (p > 2)] : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F p) => eval env input) →
+    Circuit.ComputableWitnesses (main P input) n := by
+  exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (computableWitnesses P)
 
 end LessThan
 

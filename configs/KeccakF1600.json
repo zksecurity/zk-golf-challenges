@@ -5,7 +5,8 @@
         "Solution.KeccakF1600.soundness",
         "Solution.KeccakF1600.completeness",
         "Solution.KeccakF1600.mainCost",
-        "Solution.KeccakF1600.isR1CS"
+        "Solution.KeccakF1600.isR1CS",
+        "Solution.KeccakF1600.computableWitness"
     ],
     "definition_names": [
         "Solution.KeccakF1600.main",

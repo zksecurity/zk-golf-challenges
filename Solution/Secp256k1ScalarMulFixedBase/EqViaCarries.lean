@@ -1,5 +1,6 @@
 import Solution.Secp256k1ScalarMulFixedBase.Normalize
 import Solution.Secp256k1ScalarMulFixedBase.Equal
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA big-integer multiplication (gadget G4)
@@ -549,6 +550,107 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
         have : env.get (i₀ + (2 * m - 1 - 1)) = (OFFn : F p) := by
           rw [show 2 * m - 1 - 1 = 2 * m - 2 from by omega, hwit_eq (2 * m - 2) (by omega), hCtop]
         rw [this]; ring
+
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
+  and_intros
+  · intro _ h_input
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn]
+    have hlhs :
+        evalPartial P.B env input.lhs i =
+          evalPartial P.B env' input.lhs i := by
+      simp only [evalPartial]
+      apply Finset.sum_congr rfl
+      intro j _
+      congr 1
+      by_cases hj : j < 2 * m - 1
+      · simp only [dif_pos hj]
+        have hfield :
+            Expression.eval env.toEnvironment input.lhs[j]
+              = Expression.eval env'.toEnvironment input.lhs[j] := by
+          simpa [circuit_norm, CircuitType.eval_expression_prover_to_verifier,
+            CircuitType.eval_expression, ProvableType.eval, explicit_provable_type,
+            Vector.getElem_map] using
+              congrArg (fun x : Inputs m (F p) => x.lhs[j]'hj) h_input
+        exact congrArg ZMod.val hfield
+      · simp only [dif_neg hj]
+    have hrhs :
+        evalPartial P.B env input.rhs i =
+          evalPartial P.B env' input.rhs i := by
+      simp only [evalPartial]
+      apply Finset.sum_congr rfl
+      intro j _
+      congr 1
+      by_cases hj : j < 2 * m - 1
+      · simp only [dif_pos hj]
+        have hfield :
+            Expression.eval env.toEnvironment input.rhs[j]
+              = Expression.eval env'.toEnvironment input.rhs[j] := by
+          simpa [circuit_norm, CircuitType.eval_expression_prover_to_verifier,
+            CircuitType.eval_expression, ProvableType.eval, explicit_provable_type,
+            Vector.getElem_map] using
+              congrArg (fun x : Inputs m (F p) => x.rhs[j]'hj) h_input
+        exact congrArg ZMod.val hfield
+      · simp only [dif_neg hj]
+    rw [hlhs, hrhs]
+  · intro i
+    apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+    · intro k env env' hk h_agree _
+      rw [CircuitType.eval_expression_prover_to_verifier (M := field),
+        CircuitType.eval_expression_prover_to_verifier (M := field)]
+      rw [show eval env.toEnvironment
+              ((witnessVector (2 * m - 1) fun env =>
+                Vector.ofFn fun k =>
+                  ((carryOffset (m := m) P.B +
+                      evalPartial P.B env input.lhs k.val / 2 ^ (P.B * (k.val + 1)) -
+                      evalPartial P.B env input.rhs k.val / 2 ^ (P.B * (k.val + 1)) : ℕ) :
+                    F p)).output offset)[i.val] =
+            env.get (offset + i.val) by
+          rw [CircuitType.eval_expression (M := field)]
+          simp [Circuit.witnessVector, Circuit.output, ProvableType.eval,
+            explicit_provable_type, size, Vector.getElem_mapRange, Expression.eval],
+        show eval env'.toEnvironment
+              ((witnessVector (2 * m - 1) fun env =>
+                Vector.ofFn fun k =>
+                  ((carryOffset (m := m) P.B +
+                      evalPartial P.B env input.lhs k.val / 2 ^ (P.B * (k.val + 1)) -
+                      evalPartial P.B env input.rhs k.val / 2 ^ (P.B * (k.val + 1)) : ℕ) :
+                    F p)).output offset)[i.val] =
+            env'.get (offset + i.val) by
+          rw [CircuitType.eval_expression (M := field)]
+          simp [Circuit.witnessVector, Circuit.output, ProvableType.eval,
+            explicit_provable_type, size, Vector.getElem_mapRange, Expression.eval]]
+      exact h_agree (offset + i.val) (by
+        have hbase :
+            offset + (2 * m - 1) + i.val * P.W ≤ k := by
+          simpa [Circuit.localLength, Gadgets.ToBits.rangeCheck] using hk
+        omega)
+    · exact rangeCheckComputableWitnesses P.W P.hW
+  · intro _
+    trivial
+  · split <;> trivial
+
+theorem computableWitness (P : BigIntParams p m) [Fact (p > 2)] : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F p) => eval env input) →
+    Circuit.ComputableWitnesses (main P input) n := by
+  exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (computableWitnesses P)
 
 end EqViaCarries
 

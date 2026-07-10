@@ -158,6 +158,118 @@ lemma witnessedMul_completeness (off : ℕ) (a b : Var (BigInt m) (F p)) (penv :
   simp only [witnessedMul, circuit_norm]
   intro t; rw [h t]; ring
 
+lemma evalValue_stable (B : ℕ) (x : Var (BigInt m) (F p))
+    {env env' : ProverEnvironment (F p)}
+    (h : eval env x = eval env' x) :
+    evalValue B env x = evalValue B env' x := by
+  have h_vec :
+      x.map (Expression.eval env.toEnvironment)
+        = x.map (Expression.eval env'.toEnvironment) := by
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_map]
+    have h_i := congrArg (fun y : BigInt m (F p) => y[i]) h
+    rw [ProvableType.getElem_eval_fields_prover (env := env) x i hi,
+      ProvableType.getElem_eval_fields_prover (env := env') x i hi]
+    exact h_i
+  simp [evalValue, h_vec]
+
+lemma bigIntWitnessOutput_stable
+    (compute : ProverEnvironment (F p) → BigInt m (F p))
+    {offset k : ℕ} {env env' : ProverEnvironment (F p)}
+    (h_agree : env.AgreesBelow k env') (hk : offset + m ≤ k) :
+    eval env
+        ((ProvableType.witness (α := BigInt m) compute).output offset)
+      = eval env'
+        ((ProvableType.witness (α := BigInt m) compute).output offset) := by
+  apply Vector.ext
+  intro i hi
+  rw [← ProvableType.getElem_eval_fields_prover (env := env) _ i hi,
+    ← ProvableType.getElem_eval_fields_prover (env := env') _ i hi]
+  simp only [Circuit.output, ProvableType.witness, ProvableType.varFromOffset_fields,
+    Vector.getElem_mapRange, Expression.eval]
+  exact h_agree (offset + i) (by omega)
+
+lemma witnessedMul_structuralComputableWitnesses
+    {Parent : TypeMap} [CircuitType Parent] (parentInput : Var Parent (F p))
+    (a b : Var (BigInt m) (F p)) (offset : ℕ)
+    (hinput : ∀ (k : ℕ) (env env' : ProverEnvironment (F p)),
+      offset ≤ k →
+      env.AgreesBelow k env' →
+      eval env parentInput = eval env' parentInput →
+        eval env a = eval env' a ∧ eval env b = eval env' b) :
+    ∀ env env',
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        parentInput env env' offset ((witnessedMul a b).operations offset) := by
+  intro env env'
+  unfold witnessedMul
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.provableWitness_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  constructor
+  · intro h_agree h_parent
+    obtain ⟨ha, hb⟩ := hinput offset env env' (Nat.le_refl offset) h_agree h_parent
+    apply Vector.ext
+    intro t ht
+    simp only [Vector.getElem_ofFn]
+    have ht_div : t / m < m := by
+      exact Nat.div_lt_of_lt_mul ht
+    have ht_mod : t % m < m := by
+      exact Nat.mod_lt _ (Nat.pos_of_neZero m)
+    have ha_t :
+        Expression.eval env.toEnvironment (a[t / m]'ht_div)
+          = Expression.eval env'.toEnvironment (a[t / m]'ht_div) := by
+      have h := congrArg (fun x : BigInt m (F p) => x[t / m]) ha
+      rw [ProvableType.getElem_eval_fields_prover (env := env) a (t / m) ht_div,
+        ProvableType.getElem_eval_fields_prover (env := env') a (t / m) ht_div]
+      exact h
+    have hb_t :
+        Expression.eval env.toEnvironment (b[t % m]'ht_mod)
+          = Expression.eval env'.toEnvironment (b[t % m]'ht_mod) := by
+      have h := congrArg (fun x : BigInt m (F p) => x[t % m]) hb
+      rw [ProvableType.getElem_eval_fields_prover (env := env) b (t % m) ht_mod,
+        ProvableType.getElem_eval_fields_prover (env := env') b (t % m) ht_mod]
+      exact h
+    simp [ha_t, hb_t]
+  · intro _
+    trivial
+
+lemma witnessedMul_output_stable
+    (off : ℕ) (a b : Var (BigInt m) (F p))
+    {k : ℕ} {env env' : ProverEnvironment (F p)}
+    (h_agree : env.AgreesBelow k env') (hk : off + m * m ≤ k) :
+    Vector.map (Expression.eval env.toEnvironment) (witnessedMul a b off).1
+      = Vector.map (Expression.eval env'.toEnvironment) (witnessedMul a b off).1 := by
+  rw [witnessedMul_output off a b]
+  apply Vector.ext
+  intro i hi
+  simp only [Vector.getElem_map]
+  rw [eval_bigIntMulVars_coeff env.toEnvironment
+      (Vector.mapRange (m * m) fun i => var (F := F p) { index := off + i }) ⟨i, hi⟩,
+    eval_bigIntMulVars_coeff env'.toEnvironment
+      (Vector.mapRange (m * m) fun i => var (F := F p) { index := off + i }) ⟨i, hi⟩]
+  apply Finset.sum_congr rfl
+  intro j _
+  split
+  · rename_i hidx_parts
+    have hidx : j.val * m + (i - j.val) < m * m := by
+      have hj := j.isLt
+      have hsub : i - j.val < m := hidx_parts.2
+      calc
+        j.val * m + (i - j.val) < j.val * m + m := by omega
+        _ = (j.val + 1) * m := by ring
+        _ ≤ m * m := by
+          apply Nat.mul_le_mul_right
+          omega
+    simp only [Vector.getElem_mapRange, Expression.eval]
+    apply h_agree
+    omega
+  · rfl
+
 /-- The `main` circuit of `MulMod`.
 
 Inputs are a struct with fields `a := input.a`, `b := input.b`,
@@ -364,6 +476,243 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] :
         witnessedMul_completeness _ (Vector.mapRange m fun i => var { index := i₀ + i })
           input_var.modulus env h_pvQN,
         core.2.2⟩
+
+/-- From a whole-vector eval-agreement of a `fields`-shaped variable, each element
+agrees. Generic-`F p` inline of `Params.eval_mem_of_map_eval_eq`. -/
+private lemma eval_mem_of_map_eval_eq_gen {m' : ℕ} {env env' : ProverEnvironment (F p)}
+    {x : Vector (Expression (F p)) m'}
+    (h : x.map (Expression.eval env.toEnvironment) = x.map (Expression.eval env'.toEnvironment)) :
+    ∀ a ∈ x, Expression.eval env.toEnvironment a = Expression.eval env'.toEnvironment a := by
+  intro a ha
+  simp only [Vector.mem_iff_getElem] at ha
+  rcases ha with ⟨i, hi, rfl⟩
+  simpa only [Vector.getElem_map] using congrArg (fun y : Vector (F p) m' => y[i]) h
+
+/-- From `eval env x = eval env' x` of a `BigInt m` variable, its limb expressions
+map to the same values under the two environments. -/
+private lemma bigInt_map_eval_eq_of_eval_eq {x : Var (BigInt m) (F p)}
+    {env env' : ProverEnvironment (F p)} (h : eval env x = eval env' x) :
+    x.map (Expression.eval env.toEnvironment) = x.map (Expression.eval env'.toEnvironment) := by
+  apply Vector.ext
+  intro i hi
+  simp only [Vector.getElem_map]
+  rw [ProvableType.getElem_eval_fields_prover (env := env) x i hi,
+    ProvableType.getElem_eval_fields_prover (env := env') x i hi]
+  exact congrArg (fun y : BigInt m (F p) => y[i]) h
+
+-- Keep `witnessedMul` and the child gadgets opaque during the structural peel so
+-- `bind`/`provableWitness`/`assertion` do not recurse into their internal
+-- witnesses; we discharge each block through its own `*ComputableWitnesses`
+-- theorem instead.
+attribute [local irreducible] witnessedMul Normalize.circuit EqViaCarries.circuit LessThan.circuit
+
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  -- name each block, its output, and its starting offset
+  let qc : Circuit (F p) (Var (BigInt m) (F p)) := ProvableType.witness (α := BigInt m) fun env =>
+    let prod := evalValue P.B env input.a * evalValue P.B env input.b
+    let qval : ℕ := prod / evalValue P.B env input.modulus
+    Vector.ofFn fun k : Fin m => ((qval / 2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)
+  let q := qc.output offset
+  let rOff := offset + qc.localLength offset
+  let rc : Circuit (F p) (Var (BigInt m) (F p)) := ProvableType.witness (α := BigInt m) fun env =>
+    let prod := evalValue P.B env input.a * evalValue P.B env input.b
+    let rval : ℕ := prod % evalValue P.B env input.modulus
+    Vector.ofFn fun k : Fin m => ((rval / 2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)
+  let r := rc.output rOff
+  let nqOff := rOff + rc.localLength rOff
+  let nqc : Circuit (F p) Unit := Normalize.circuit P q
+  let nrOff := nqOff + nqc.localLength nqOff
+  let nrc : Circuit (F p) Unit := Normalize.circuit P r
+  let pcOff := nrOff + nrc.localLength nrOff
+  let pcv := (witnessedMul input.a input.b).output pcOff
+  let sqOff := pcOff + (witnessedMul input.a input.b).localLength pcOff
+  let sqv := (witnessedMul q input.modulus).output sqOff
+  let eqOff := sqOff + (witnessedMul q input.modulus).localLength sqOff
+  let Sv : Vector (Expression (F p)) (2 * m - 1) := Vector.mapFinRange (2 * m - 1) fun k =>
+    if h : k.val < m then sqv[k.val] + r[k.val]'h else sqv[k.val]
+  let eqc : Circuit (F p) Unit := EqViaCarries.circuit P { lhs := pcv, rhs := Sv }
+  let ltOff := eqOff + eqc.localLength eqOff
+  have h_qlen : qc.localLength offset = m := by
+    simp [qc, ProvableType.witness, Circuit.localLength, Operations.localLength, size]
+  have h_rlen : rc.localLength rOff = m := by
+    simp [rc, ProvableType.witness, Circuit.localLength, Operations.localLength, size]
+  have h_pclen : (witnessedMul input.a input.b).localLength pcOff = m * m :=
+    witnessedMul_localLength pcOff input.a input.b
+  have h_sqlen : (witnessedMul q input.modulus).localLength sqOff = m * m :=
+    witnessedMul_localLength sqOff q input.modulus
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.provableWitness_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  and_intros
+  · -- q witness reads only the input
+    intro _ h_input
+    have ha : evalValue P.B env input.a = evalValue P.B env' input.a :=
+      evalValue_stable P.B input.a (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.a) h_input)
+    have hb : evalValue P.B env input.b = evalValue P.B env' input.b :=
+      evalValue_stable P.B input.b (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.b) h_input)
+    have hn : evalValue P.B env input.modulus = evalValue P.B env' input.modulus :=
+      evalValue_stable P.B input.modulus (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.modulus) h_input)
+    simp only [ha, hb, hn]
+  · -- r witness reads only the input
+    intro _ h_input
+    have ha : evalValue P.B env input.a = evalValue P.B env' input.a :=
+      evalValue_stable P.B input.a (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.a) h_input)
+    have hb : evalValue P.B env input.b = evalValue P.B env' input.b :=
+      evalValue_stable P.B input.b (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.b) h_input)
+    have hn : evalValue P.B env input.modulus = evalValue P.B env' input.modulus :=
+      evalValue_stable P.B input.modulus (by
+        simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.modulus) h_input)
+    simp only [ha, hb, hn]
+  · -- Normalize q (q is the first witness output)
+    exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (Normalize.circuit P) input q nqOff
+      (by
+        intro k env env' hle h_agree _
+        have hk : offset + m ≤ k := by
+          dsimp only [nqOff, rOff] at hle
+          rw [h_qlen] at hle
+          omega
+        exact bigIntWitnessOutput_stable _ h_agree hk)
+      (Normalize.computableWitnesses P) env env'
+  · -- Normalize r (r is the second witness output)
+    exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (Normalize.circuit P) input r nrOff
+      (by
+        intro k env env' hle h_agree _
+        have hk : rOff + m ≤ k := by
+          dsimp only [nrOff, nqOff] at hle
+          rw [h_rlen] at hle
+          omega
+        exact bigIntWitnessOutput_stable _ h_agree hk)
+      (Normalize.computableWitnesses P) env env'
+  · -- witnessedMul a b : both operands are raw inputs
+    exact witnessedMul_structuralComputableWitnesses input input.a input.b pcOff
+      (by
+        intro k env env' _ _ h_input
+        have ha : eval env input.a = eval env' input.a := by
+          simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.a) h_input
+        have hb : eval env input.b = eval env' input.b := by
+          simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.b) h_input
+        exact ⟨ha, hb⟩)
+      env env'
+  · -- witnessedMul q n : q is a prior witness output, n is a raw input
+    exact witnessedMul_structuralComputableWitnesses input q input.modulus sqOff
+      (by
+        intro k env env' hk_off h_agree h_input
+        have hq : eval env q = eval env' q := by
+          have hk : offset + m ≤ k := by
+            dsimp only [sqOff, pcOff, nrOff, nqOff, rOff] at hk_off
+            rw [h_qlen] at hk_off
+            omega
+          exact bigIntWitnessOutput_stable _ h_agree hk
+        have hn : eval env input.modulus = eval env' input.modulus := by
+          simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.modulus) h_input
+        exact ⟨hq, hn⟩)
+      env env'
+  · -- EqViaCarries: lhs = Pc (witnessedMul output), rhs = S (built from Sqn and r)
+    exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (EqViaCarries.circuit P) input { lhs := pcv, rhs := Sv } eqOff
+      (by
+        intro k env env' hle h_agree _
+        have hk_pc : pcOff + m * m ≤ k := by
+          dsimp only [eqOff, sqOff] at hle
+          rw [h_pclen] at hle
+          omega
+        have hk_sq : sqOff + m * m ≤ k := by
+          dsimp only [eqOff] at hle
+          rw [h_sqlen] at hle
+          omega
+        have hk_r : rOff + m ≤ k := by
+          dsimp only [eqOff, sqOff, pcOff, nrOff, nqOff] at hle
+          rw [h_rlen] at hle
+          omega
+        have hPc : Vector.map (Expression.eval env.toEnvironment) pcv
+            = Vector.map (Expression.eval env'.toEnvironment) pcv :=
+          witnessedMul_output_stable pcOff input.a input.b h_agree hk_pc
+        have hSq : Vector.map (Expression.eval env.toEnvironment) sqv
+            = Vector.map (Expression.eval env'.toEnvironment) sqv :=
+          witnessedMul_output_stable sqOff q input.modulus h_agree hk_sq
+        have hr_vec : eval env r = eval env' r := bigIntWitnessOutput_stable _ h_agree hk_r
+        have hr_map : r.map (Expression.eval env.toEnvironment)
+            = r.map (Expression.eval env'.toEnvironment) := bigInt_map_eval_eq_of_eval_eq hr_vec
+        have hS : Vector.map (Expression.eval env.toEnvironment) Sv
+            = Vector.map (Expression.eval env'.toEnvironment) Sv := by
+          apply Vector.ext
+          intro i hi
+          simp only [Vector.getElem_map, Sv, Vector.getElem_mapFinRange]
+          split
+          · rename_i hlt
+            have hsq_i : Expression.eval env.toEnvironment sqv[i]
+                = Expression.eval env'.toEnvironment sqv[i] := by
+              have := congrArg (fun v : Vector (F p) (2 * m - 1) => v[i]'(by simpa using hi)) hSq
+              simpa only [Vector.getElem_map] using this
+            have hr_i : Expression.eval env.toEnvironment (r[i]'hlt)
+                = Expression.eval env'.toEnvironment (r[i]'hlt) := by
+              have := congrArg (fun v : Vector (F p) m => v[i]'hlt) hr_map
+              simpa only [Vector.getElem_map] using this
+            simp only [Expression.eval, hsq_i, hr_i]
+          · have := congrArg (fun v : Vector (F p) (2 * m - 1) => v[i]'(by simpa using hi)) hSq
+            simpa only [Vector.getElem_map] using this
+        simp only [circuit_norm]
+        rw [hPc, hS])
+      (EqViaCarries.computableWitnesses P) env env'
+  · -- LessThan: lhs = r (prior witness output), rhs = n (raw input)
+    exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (LessThan.circuit P) input { lhs := r, rhs := input.modulus } ltOff
+      (by
+        intro k env env' hle h_agree h_input
+        have hk_r : rOff + m ≤ k := by
+          dsimp only [ltOff, eqOff, sqOff, pcOff, nrOff, nqOff] at hle
+          rw [h_rlen] at hle
+          omega
+        have hr_vec : eval env r = eval env' r := bigIntWitnessOutput_stable _ h_agree hk_r
+        have hn : eval env input.modulus = eval env' input.modulus := by
+          simpa [circuit_norm] using congrArg (fun x : Inputs m (F p) => x.modulus) h_input
+        simp only [circuit_norm]
+        rw [bigInt_map_eval_eq_of_eval_eq hr_vec, bigInt_map_eval_eq_of_eval_eq hn])
+      (LessThan.computableWitnesses P) env env'
+
+theorem computableWitness (P : BigIntParams p m) [Fact (p > 2)] : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F p) => eval env input) →
+    Circuit.ComputableWitnesses ((main P) input) n :=
+  Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (circuit := (circuit P).base) (computableWitnesses P)
+
+/-- Output-agreement: the `MulMod` output is the remainder witness `r`, allocated at
+`offset + m` (right after the quotient `q`), reading only the `m` cells
+`[offset+m, offset+2m)`. Environments agreeing below `offset + m + m` (in particular
+below `offset + (circuit P).localLength input`) evaluate the output identically. -/
+lemma eval_output_of_agreesBelow (P : BigIntParams p m) [Fact (p > 2)]
+    (input : Var (Inputs m) (F p)) {offset k : ℕ}
+    {env env' : ProverEnvironment (F p)}
+    (h_agree : env.AgreesBelow k env') (hk : offset + m + m ≤ k) :
+    eval env ((main P input).output offset) = eval env' ((main P input).output offset) := by
+  rw [(elaborated P).output_eq input offset]
+  show eval env (varFromOffset (BigInt m) (offset + m))
+    = eval env' (varFromOffset (BigInt m) (offset + m))
+  apply Vector.ext
+  intro i hi
+  rw [← ProvableType.getElem_eval_fields_prover (env := env) _ i hi,
+    ← ProvableType.getElem_eval_fields_prover (env := env') _ i hi]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange, Expression.eval]
+  exact h_agree (offset + m + i) (by omega)
 
 end MulMod
 

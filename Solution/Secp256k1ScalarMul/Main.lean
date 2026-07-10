@@ -164,6 +164,99 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
 
 end Cost
 
+section ComputableWitness
+
+open Challenge.Utils.ComputableWitnessLemmas
+
+-- Keep the `ScalarMul` child opaque: unifying the structural goal against the
+-- subcircuit lemma would otherwise `whnf` the 256-step fold and overflow the
+-- kernel. `unfold main` still works through the equational lemma.
+attribute [local irreducible] main ScalarMul.circuit ScalarMul.main
+
+/-- `packCoord` is a pure affine reindexing of the input bytes, so agreeing
+input coordinates (as evaluated byte vectors) give agreeing packed limbs. -/
+private lemma eval_packCoord_congr
+    {e1 e2 : ProverEnvironment (F Interface.circomPrime)}
+    (v : Vector (Expression (F Interface.circomPrime)) Interface.coordBytes)
+    (h : Vector.map (Expression.eval e1.toEnvironment) v
+        = Vector.map (Expression.eval e2.toEnvironment) v) :
+    Vector.map (Expression.eval e1.toEnvironment) (packCoord v)
+      = Vector.map (Expression.eval e2.toEnvironment) (packCoord v) := by
+  rw [show packCoord = MainTheorems.packCoordE from rfl,
+    MainTheorems.eval_packCoordE, MainTheorems.eval_packCoordE, h]
+
+theorem computableWitness : ∀ n input,
+  ProverEnvironment.OnlyAccessedBelow n
+    (fun env : ProverEnvironment (F Interface.circomPrime) => eval env input) →
+  Circuit.ComputableWitnesses (main input) n := by
+  intro n input hinput env env'
+  change (main input).operations n |>.forAllFlat n
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' n ((main input).operations n) := by
+    unfold main
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff, and_true]
+    refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      ScalarMul.circuit input
+      { bits := input.bits, px := packCoord input.px, py := packCoord input.py } n ?_
+      ScalarMul.computableWitnesses env env'
+    intro e1 e2 h_input_eq
+    simp only [circuit_norm, ScalarMul.Inputs.mk.injEq]
+    refine ⟨?_, ?_, ?_⟩
+    · simpa [circuit_norm] using
+        congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.bits) h_input_eq
+    · exact eval_packCoord_congr input.px
+        (by simpa [circuit_norm] using
+          congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.px) h_input_eq)
+    · exact eval_packCoord_congr input.py
+        (by simpa [circuit_norm] using
+          congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.py) h_input_eq)
+  -- reduce the flattened structural condition to the target `forAllFlat` condition
+  have hflat :=
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
+  unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
+  rw [← Operations.forAll_toFlat_iff] at hflat ⊢
+  let targetCondition : Condition (F Interface.circomPrime) :=
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  apply FlatOperation.forAll_implies (F := F Interface.circomPrime) n ?_ hflat
+  have himplies : ∀ (ops : List (FlatOperation (F Interface.circomPrime))) (off : ℕ),
+      n ≤ off →
+      FlatOperation.forAll off
+        (Condition.implies
+          (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition
+            input env env')
+          targetCondition).ignoreSubcircuit
+        ops := by
+    intro ops off hoff
+    induction ops generalizing off with
+    | nil => simp [FlatOperation.forAll]
+    | cons op ops ih =>
+      cases op with
+      | witness m compute =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          constructor
+          · intro hparent hagree
+            exact hparent hagree
+              (hinput env env' (ProverEnvironment.agreesBelow_of_le hagree hoff))
+          · exact ih (m + off) (by omega)
+      | assert e =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | lookup l =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | interact i =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+  exact himplies ((main input).operations n).toFlat n (le_refl n)
+
+end ComputableWitness
+
 -- No `formalCircuit` bundle here: unifying the theorems against the
 -- `GeneralFormalCircuit` field types forces a `whnf` of the 256-step fold
 -- term and times out, and the comparator only requires `main`, `elaborated`,

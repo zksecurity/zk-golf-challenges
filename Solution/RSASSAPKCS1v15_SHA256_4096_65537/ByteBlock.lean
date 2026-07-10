@@ -3,6 +3,7 @@ import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Normalize
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Equal
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.ByteBlockTheorems
 import Challenge.Instances.RSASSAPKCS1v15_SHA256_4096_65537.Interface
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # `ByteBlock` assertion — 32 big-endian bytes are consistent with 256 bits
@@ -171,5 +172,25 @@ def circuit : FormalAssertion (F circomPrime) Inputs :=
     completeness := by simp only [completeness]
     exposedChannels_eq := by intro _ _ exposed h; simp at h }
 
+set_option linter.constructorNameAsVariable false in
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  have hmain : circuit.main = main := by delta circuit; with_reducible rfl
+  have hstruct :
+      FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' offset ((main input).operations offset) := by
+    unfold main
+    simp only [
+      Circuit.bind_structuralComputableWitnesses_iff,
+      Circuit.forEach_structuralComputableWitnesses_iff,
+      Circuit.assertZero_structuralComputableWitnesses_iff,
+      and_true, implies_true]
+  rw [hmain]
+  generalize hops : (main input).operations offset = ops at hstruct ⊢
+  exact FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+    input env env' hstruct
+
 end ByteBlock
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
+

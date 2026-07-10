@@ -170,6 +170,71 @@ lemma foldlAcc_eq_varSchedule (i₀ : ℕ) (input_var_block : SHA256Block (Expre
     simp only [Circuit.output, Circuit.localLength, scheduleStep_output, scheduleStep_localLength,
       circuit_norm]
 
+lemma foldlAcc_eq_varSchedule_main (i₀ : ℕ) (input_var_block : SHA256Block (Expression (F p)))
+    (k : ℕ) (h : k < 48) :
+    Circuit.FoldlM.foldlAcc i₀ (Vector.finRange 48)
+      (fun (w : SHA256Schedule (Expression (F p))) (i : Fin 48) => do
+        let wj ← ScheduleStep.circuit
+          ⟨w.get ⟨i.val + 16 - 2, by omega⟩, w.get ⟨i.val + 16 - 7, by omega⟩,
+           w.get ⟨i.val + 16 - 15, by omega⟩, w.get ⟨i.val + 16 - 16, by omega⟩⟩
+        return w.set (i.val + 16) wj (by omega))
+      (Vector.append input_var_block (Vector.replicate 48 (Vector.replicate 32 (0 : Expression (F p)))))
+      ⟨k, h⟩ =
+        varSchedule i₀ input_var_block k := by
+  simpa only [Circuit.bind, subcircuit, circuit_norm]
+    using foldlAcc_eq_varSchedule i₀ input_var_block k h
+
+omit [Fact (p > 2 ^ 33)] in
+lemma eval_mem_varSchedule_of_agreesBelow {offset k : ℕ}
+    {env env' : ProverEnvironment (F p)}
+    {input : Var SHA256Block (F p)}
+    (hk : k ≤ 48)
+    (h_agree : env.AgreesBelow (offset + k * 227) env')
+    (h_input : eval env input = eval env' input) :
+    ∀ (j : ℕ) (hj : j < 64), j < k + 16 →
+      ∀ a ∈ (varSchedule offset input k)[j]'hj,
+        Expression.eval env.toEnvironment a = Expression.eval env'.toEnvironment a := by
+  simp [circuit_norm] at h_input
+  induction k with
+  | zero =>
+      intro j hj hjk a ha
+      simp only [varSchedule] at ha
+      have hj16 : j < 16 := by omega
+      have hget :
+          (Vector.append input (Vector.replicate 48 (Vector.replicate 32 (0 : Expression (F p)))))[j]'hj =
+            input[j]'hj16 :=
+        Vector.getElem_append_left hj16
+      rw [hget] at ha
+      have h_eval_word :
+          eval env.toEnvironment (input[j]'hj16) =
+            eval env'.toEnvironment (input[j]'hj16) := by
+        rw [getElem_eval_vector env.toEnvironment input j hj16,
+          getElem_eval_vector env'.toEnvironment input j hj16]
+        exact congrArg (fun block : SHA256Block (F p) => block[j]'hj16) h_input
+      have h_word :
+          Vector.map (Expression.eval env.toEnvironment) (input[j]'hj16) =
+            Vector.map (Expression.eval env'.toEnvironment) (input[j]'hj16) := by
+        rw [← CircuitType.eval_var_fields env.toEnvironment (input[j]'hj16),
+          ← CircuitType.eval_var_fields env'.toEnvironment (input[j]'hj16)]
+        exact h_eval_word
+      rw [Vector.mem_iff_getElem] at ha
+      rcases ha with ⟨i, hi, hget_a⟩
+      rw [← hget_a]
+      simpa [Vector.getElem_map] using congrArg (fun word : fields 32 (F p) => word[i]'hi) h_word
+  | succ k ih =>
+      intro j hj hjk a ha
+      have hk' : k ≤ 48 := by omega
+      have h_agree_prev : env.AgreesBelow (offset + k * 227) env' :=
+        ProverEnvironment.agreesBelow_of_le h_agree (by omega)
+      simp only [varSchedule, dif_pos (by omega : k < 48)] at ha
+      by_cases hset : j = k + 16
+      · subst hset
+        rw [Vector.getElem_set_self] at ha
+        exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+          h_agree (by omega) a ha
+      · rw [Vector.getElem_set_ne (by omega : k + 16 < 64) hj (by omega : k + 16 ≠ j)] at ha
+        exact ih hk' h_agree_prev j hj (by omega) a ha
+
 end MessageSchedule
 end Solution.SHA256
 end

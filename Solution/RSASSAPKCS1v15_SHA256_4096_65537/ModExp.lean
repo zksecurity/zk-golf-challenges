@@ -700,6 +700,232 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
           hbase_norm hn_norm hbase_lt hn_pos tail _ i₀ 1
           hbase_norm hbase_lt hbase_val h_env).1
 
+/-! ## Computable witnesses -/
+
+open Challenge.Utils.ComputableWitnessLemmas in
+/-- **Structural computable-witness fact for the unrolled loop.** By induction on
+the bit list: every witness of `modExpLoop` lives inside a `MulMod` subcircuit, so
+its determinism follows from `MulMod.computableWitnesses`, provided the subcircuit
+inputs agree. The threaded accumulator agreement (`hacc`) is propagated across
+iterations using `MulMod.eval_output_of_agreesBelow`. -/
+lemma modExpLoop_structuralComputableWitnesses (P : BigIntParams p m) [Fact (p > 2)]
+    (parentInput : Var (Inputs m) (F p)) (base n : Var (BigInt m) (F p))
+    (hbase : ∀ (e e' : ProverEnvironment (F p)),
+      eval e parentInput = eval e' parentInput → eval e base = eval e' base)
+    (hn : ∀ (e e' : ProverEnvironment (F p)),
+      eval e parentInput = eval e' parentInput → eval e n = eval e' n)
+    (bs : List Bool) :
+    ∀ (acc : Var (BigInt m) (F p)) (offset : ℕ) (env env' : ProverEnvironment (F p)),
+      (∀ (k : ℕ) (e e' : ProverEnvironment (F p)), offset ≤ k → e.AgreesBelow k e' →
+        eval e parentInput = eval e' parentInput → eval e acc = eval e' acc) →
+      FormalCircuitBase.Operations.StructuralComputableWitnesses
+        parentInput env env' offset ((modExpLoop P base n bs acc).operations offset) := by
+  induction bs with
+  | nil =>
+    intro acc offset env env' hacc
+    simp only [modExpLoop, Circuit.pure_structuralComputableWitnesses_iff]
+  | cons bit rest ih =>
+    intro acc offset env env' hacc
+    -- length/output normal forms for a `MulMod` subcircuit
+    have hsublen : ∀ (X : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+        (subcircuit (MulMod.circuit P) X).localLength off = mulModLen (m := m) P.B P.W :=
+      fun _ _ => rfl
+    have hsubout : ∀ (X : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+        (subcircuit (MulMod.circuit P) X).output off
+          = (Vector.mapRange m fun i => var (F := F p) { index := off + m + i }) := by
+      intro X off; simp only [circuit_norm, MulMod.circuit, MulMod.elaborated]
+    -- a `MulMod` output block agrees under any env agreement covering it
+    have hblock_agree : ∀ (off k : ℕ) (e e' : ProverEnvironment (F p)),
+        off + m + m ≤ k → e.AgreesBelow k e' →
+        eval e (Vector.mapRange m fun i => var (F := F p) { index := off + m + i })
+          = eval e' (Vector.mapRange m fun i => var (F := F p) { index := off + m + i }) := by
+      intro off k e e' hk hag
+      simp only [circuit_norm]
+      exact MulMod.map_eval_varFromOffset_agree (off := off + m) hag (by omega)
+    -- discharge one `MulMod` subcircuit given input agreement
+    have discharge_sub : ∀ (X : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+        (∀ (k : ℕ) (e e' : ProverEnvironment (F p)), off ≤ k → e.AgreesBelow k e' →
+          eval e parentInput = eval e' parentInput → eval e X = eval e' X) →
+        FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' off
+          ((subcircuit (MulMod.circuit P) X).operations off) := by
+      intro X off hX
+      rw [FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+      exact FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (MulMod.circuit P) parentInput X off hX (MulMod.computableWitnesses P) env env'
+    cases bit
+    · simp only [modExpLoop, Bool.false_eq_true, if_false,
+        Circuit.bind_structuralComputableWitnesses_iff,
+        Circuit.pure_structuralComputableWitnesses_iff, Circuit.pure_localLength_eq,
+        Circuit.pure_output_eq, Nat.add_zero, true_and, hsublen]
+      refine ⟨discharge_sub _ offset ?_, ?_⟩
+      · intro k e e' hk hag hin
+        have ha := hacc k e e' hk hag hin
+        have hnn := hn e e' hin
+        simp only [circuit_norm] at ha hnn ⊢
+        simp only [ha, hnn]
+      · refine ih _ _ env env' ?_
+        intro k e e' hk hag _
+        rw [hsubout _ offset]
+        exact hblock_agree offset k e e' (by simp only [mulModLen] at hk ⊢; omega) hag
+    · simp only [modExpLoop, if_true,
+        Circuit.bind_structuralComputableWitnesses_iff, hsublen]
+      refine ⟨discharge_sub _ offset ?_, discharge_sub _ (offset + mulModLen (m := m) P.B P.W) ?_, ?_⟩
+      · intro k e e' hk hag hin
+        have ha := hacc k e e' hk hag hin
+        have hnn := hn e e' hin
+        simp only [circuit_norm] at ha hnn ⊢
+        simp only [ha, hnn]
+      · intro k e e' hk hag hin
+        have hbb := hbase e e' hin
+        have hnn := hn e e' hin
+        have hsq : eval e ((subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }).output offset)
+            = eval e' ((subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }).output offset) := by
+          rw [hsubout _ offset]
+          exact hblock_agree offset k e e' (by simp only [mulModLen] at hk ⊢; omega) hag
+        simp only [circuit_norm] at hbb hnn hsq ⊢
+        simp only [hsq, hbb, hnn]
+      · refine ih _ _ env env' ?_
+        intro k e e' hk hag _
+        rw [hsubout _ (offset + mulModLen (m := m) P.B P.W)]
+        exact hblock_agree (offset + mulModLen (m := m) P.B P.W) k e e'
+          (by simp only [mulModLen] at hk ⊢; omega) hag
+
+/-- **Output agreement for the unrolled loop.** The final accumulator is either
+the seed `acc` (empty list) or a `MulMod` output block; in both cases it agrees
+across environments that coincide on the seed and below the whole loop. -/
+lemma modExpLoop_eval_output_of_agreesBelow (P : BigIntParams p m) [Fact (p > 2)]
+    (base n : Var (BigInt m) (F p)) (bs : List Bool) :
+    ∀ (acc : Var (BigInt m) (F p)) (offset : ℕ) (env env' : ProverEnvironment (F p)),
+      eval env acc = eval env' acc →
+      env.AgreesBelow (offset + (bs.length + bs.count true) * mulModLen (m := m) P.B P.W) env' →
+      eval env ((modExpLoop P base n bs acc).output offset)
+        = eval env' ((modExpLoop P base n bs acc).output offset) := by
+  induction bs with
+  | nil =>
+    intro acc offset env env' hacc _
+    simp only [modExpLoop, Circuit.pure_output_eq]
+    exact hacc
+  | cons bit rest ih =>
+    intro acc offset env env' hacc hag
+    have h2mL : 2 * m ≤ mulModLen (m := m) P.B P.W := by simp only [mulModLen]; omega
+    have hsublen : ∀ (X : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+        (subcircuit (MulMod.circuit P) X).localLength off = mulModLen (m := m) P.B P.W :=
+      fun _ _ => rfl
+    have hsubout : ∀ (X : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+        (subcircuit (MulMod.circuit P) X).output off
+          = (Vector.mapRange m fun i => var (F := F p) { index := off + m + i }) := by
+      intro X off; simp only [circuit_norm, MulMod.circuit, MulMod.elaborated]
+    have hblock : ∀ (off : ℕ),
+        off + m + m ≤ offset + ((bit :: rest).length + (bit :: rest).count true) * mulModLen (m := m) P.B P.W →
+        eval env (Vector.mapRange m fun i => var (F := F p) { index := off + m + i })
+          = eval env' (Vector.mapRange m fun i => var (F := F p) { index := off + m + i }) := by
+      intro off hoff
+      simp only [circuit_norm]
+      exact MulMod.map_eval_varFromOffset_agree (off := off + m)
+        (ProverEnvironment.agreesBelow_of_le hag hoff) (by omega)
+    cases bit
+    · simp only [modExpLoop, Bool.false_eq_true, if_false, Circuit.bind_output_eq,
+        Circuit.pure_output_eq, Circuit.pure_localLength_eq, Nat.add_zero, hsublen]
+      refine ih _ _ env env' ?_ ?_
+      · rw [hsubout _ offset]
+        refine hblock offset ?_
+        have hpos : 0 < (false :: rest).length + (false :: rest).count true := by
+          simp only [List.length_cons]; omega
+        have hml : m + m ≤ ((false :: rest).length + (false :: rest).count true)
+            * mulModLen (m := m) P.B P.W :=
+          le_trans (by omega) (Nat.le_mul_of_pos_left _ hpos)
+        omega
+      · refine ProverEnvironment.agreesBelow_of_le hag (le_of_eq ?_)
+        simp only [List.length_cons, List.count_cons, Bool.false_eq_true, if_false, Nat.add_zero,
+          beq_iff_eq]
+        ring
+    · simp only [modExpLoop, if_true, Circuit.bind_output_eq, hsublen]
+      refine ih _ _ env env' ?_ ?_
+      · rw [hsubout _ (offset + mulModLen (m := m) P.B P.W)]
+        refine hblock (offset + mulModLen (m := m) P.B P.W) ?_
+        have hc2 : 2 ≤ (true :: rest).length + (true :: rest).count true := by
+          simp only [List.length_cons, List.count_cons, beq_self_eq_true, if_true]; omega
+        have h2L : 2 * mulModLen (m := m) P.B P.W
+            ≤ ((true :: rest).length + (true :: rest).count true) * mulModLen (m := m) P.B P.W :=
+          Nat.mul_le_mul hc2 (le_refl _)
+        omega
+      · refine ProverEnvironment.agreesBelow_of_le hag (le_of_eq ?_)
+        simp only [List.length_cons, List.count_cons, beq_self_eq_true, if_true]
+        ring
+
+/-- **Output agreement for `ModExp`.** Mirrors `MulMod.eval_output_of_agreesBelow`;
+used by `Main`. The output is the loop's final accumulator (a `MulMod` block or,
+for a trivial exponent, the seed / the constant `1`), which agrees under input
+agreement and env agreement covering the whole circuit. -/
+lemma eval_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F p)}
+    (P : RSAParams p m) [Fact (p > 2)] (input : Var (Inputs m) (F p))
+    (h_input : eval env input = eval env' input)
+    (h_agree : env.AgreesBelow (offset + (circuit P).localLength input) env') :
+    eval env ((main P input).output offset) = eval env' ((main P input).output offset) := by
+  have hbin : eval env input.base = eval env' input.base := by
+    have hm := congrArg (fun s : Inputs m (F p) => s.base) h_input
+    simp only [circuit_norm] at hm ⊢; exact hm
+  have hlen : (circuit P).localLength input
+      = modExpCount P.e * mulModLen (m := m) P.bigIntParams.B P.bigIntParams.W := rfl
+  rw [hlen] at h_agree
+  unfold main
+  cases h : eBits P.e with
+  | nil =>
+    simp only [circuit_norm]
+    apply Vector.ext
+    intro j hj
+    simp only [Vector.getElem_map, Vector.getElem_ofFn]
+    split <;> rfl
+  | cons headBit tail =>
+    simp only [modExpCount, h] at h_agree
+    exact modExpLoop_eval_output_of_agreesBelow P.bigIntParams input.base input.modulus tail
+      input.base offset env env' hbin h_agree
+
+/-- Circuit-level (subcircuit) output agreement, bridging `eval_output_of_agreesBelow`
+through `elaborated.output_eq`. Mirrors `CompressBlock.eval_circuit_output_of_agreesBelow`;
+used by `Main`. -/
+lemma eval_circuit_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F p)}
+    (P : RSAParams p m) [Fact (p > 2)] (input : Var (Inputs m) (F p))
+    (h_input : eval env input = eval env' input)
+    (h_agree : env.AgreesBelow (offset + (circuit P).localLength input) env') :
+    eval env ((circuit P).output input offset)
+      = eval env' ((circuit P).output input offset) := by
+  change eval env (ElaboratedCircuit.output (main P) input offset) =
+    eval env' (ElaboratedCircuit.output (main P) input offset)
+  rw [← (elaborated P).output_eq input offset]
+  exact eval_output_of_agreesBelow P input h_input h_agree
+
+open Challenge.Utils.ComputableWitnessLemmas in
+/-- **Computable witnesses for `ModExp`.** All witnesses live inside `MulMod`
+subcircuits; the seed accumulator `base = input.base` and the modulus
+`n = input.modulus` agree via the parent input, so the loop lemma discharges the
+structural obligation. -/
+theorem computableWitnesses (P : RSAParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  have hbase : ∀ (e e' : ProverEnvironment (F p)),
+      eval e input = eval e' input → eval e input.base = eval e' input.base := by
+    intro e e' hin
+    have hm := congrArg (fun s : Inputs m (F p) => s.base) hin
+    simp only [circuit_norm] at hm ⊢; exact hm
+  have hn : ∀ (e e' : ProverEnvironment (F p)),
+      eval e input = eval e' input → eval e input.modulus = eval e' input.modulus := by
+    intro e e' hin
+    have hm := congrArg (fun s : Inputs m (F p) => s.modulus) hin
+    simp only [circuit_norm] at hm ⊢; exact hm
+  unfold main
+  cases h : eBits P.e with
+  | nil =>
+    simp only [Circuit.pure_structuralComputableWitnesses_iff]
+  | cons headBit tail =>
+    exact modExpLoop_structuralComputableWitnesses P.bigIntParams input input.base input.modulus
+      hbase hn tail input.base offset env env'
+      (fun k e e' _ _ hin => hbase e e' hin)
+
 end ModExp
 
 end

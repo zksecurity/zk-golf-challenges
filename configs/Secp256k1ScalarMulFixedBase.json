@@ -5,7 +5,8 @@
         "Solution.Secp256k1ScalarMulFixedBase.soundness",
         "Solution.Secp256k1ScalarMulFixedBase.completeness",
         "Solution.Secp256k1ScalarMulFixedBase.mainCost",
-        "Solution.Secp256k1ScalarMulFixedBase.isR1CS"
+        "Solution.Secp256k1ScalarMulFixedBase.isR1CS",
+        "Solution.Secp256k1ScalarMulFixedBase.computableWitness"
     ],
     "definition_names": [
         "Solution.Secp256k1ScalarMulFixedBase.main",

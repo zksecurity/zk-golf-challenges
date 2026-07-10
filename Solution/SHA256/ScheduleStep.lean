@@ -2,6 +2,7 @@ import Solution.SHA256.LowerSigma0
 import Solution.SHA256.LowerSigma1
 import Solution.SHA256.Add32
 import Challenge.Specs.SHA256
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [Fact (p > 2^33)]
@@ -86,6 +87,95 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) Inputs (fields 32) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  let s1Circuit : Circuit (F p) (Var (fields 32) (F p)) := LowerSigma1.circuit input.wm2
+  let s1 := s1Circuit.output offset
+  let n1 := offset + s1Circuit.localLength offset
+  let s0Circuit : Circuit (F p) (Var (fields 32) (F p)) := LowerSigma0.circuit input.wm15
+  let s0 := s0Circuit.output n1
+  let n2 := n1 + s0Circuit.localLength n1
+  let sum0Circuit : Circuit (F p) (Var (fields 32) (F p)) := Add32.circuit ⟨s1, input.wm7⟩
+  let sum0 := sum0Circuit.output n2
+  let n3 := n2 + sum0Circuit.localLength n2
+  let sum1Circuit : Circuit (F p) (Var (fields 32) (F p)) := Add32.circuit ⟨sum0, s0⟩
+  let sum1 := sum1Circuit.output n3
+  let n4 := n3 + sum1Circuit.localLength n3
+  have h_s1_len : s1Circuit.localLength offset = 64 := by
+    simp [s1Circuit, LowerSigma1.circuit, circuit_norm]
+  have h_s0_len : s0Circuit.localLength n1 = 64 := by
+    simp [s0Circuit, LowerSigma0.circuit, circuit_norm]
+  have h_sum0_len : sum0Circuit.localLength n2 = 33 := by
+    simp [sum0Circuit, Add32.circuit, circuit_norm]
+  have h_sum1_len : sum1Circuit.localLength n3 = 33 := by
+    simp [sum1Circuit, Add32.circuit, circuit_norm]
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  and_intros
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      LowerSigma1.circuit input input.wm2 offset
+      (by
+        intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        exact h_input.1)
+      LowerSigma1.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+      LowerSigma0.circuit input input.wm15 n1
+      (by
+        intro env env' h_input
+        simp [circuit_norm] at h_input ⊢
+        exact h_input.2.2.1)
+      LowerSigma0.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      Add32.circuit input ⟨s1, input.wm7⟩ n2
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        constructor
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by
+              simp [s1Circuit, n2, n1, LowerSigma1.circuit, circuit_norm] at hle ⊢
+              omega)
+        · exact h_input.2.1)
+      Add32.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      Add32.circuit input ⟨sum0, s0⟩ n3
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        constructor
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by
+              simp [sum0Circuit, n3, n2, n1, h_s1_len,
+                Add32.circuit, circuit_norm] at hle ⊢
+              omega)
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by
+              simp [s0Circuit, n3, n2, n1, h_s1_len,
+                LowerSigma0.circuit, circuit_norm] at hle ⊢
+              omega))
+      Add32.computableWitnesses env env'
+  · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      Add32.circuit input ⟨sum1, input.wm16⟩ n4
+      (by
+        intro k env env' hle h_agree h_input
+        simp [circuit_norm] at h_input ⊢
+        constructor
+        · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+            h_agree (by
+              simp [sum1Circuit, n4, n3, n2, n1, h_s1_len,
+                Add32.circuit, circuit_norm] at hle ⊢
+              omega)
+        · exact h_input.2.2.2)
+      Add32.computableWitnesses env env'
 
 end ScheduleStep
 end Solution.SHA256

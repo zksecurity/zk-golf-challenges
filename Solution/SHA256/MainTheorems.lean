@@ -194,6 +194,56 @@ lemma paddedBlock_normalized (env : Environment (F circomPrime))
   simp only [IsBool] at this
   exact this
 
+lemma paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+    {env env' : ProverEnvironment (F circomPrime)} {offset k : ℕ}
+    (h_agree : env.AgreesBelow k env') (hbound : offset + paddedBitsLen ≤ k)
+    (b : Fin paddedBlocksLen) :
+    eval env.toEnvironment
+        (paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b) =
+      eval env'.toEnvironment
+        (paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b) := by
+  apply Vector.ext
+  intro w hw
+  rw [← getElem_eval_vector (α := fields 32) env.toEnvironment
+      (paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b) w hw,
+    ← getElem_eval_vector (α := fields 32) env'.toEnvironment
+      (paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b) w hw]
+  apply Vector.ext
+  intro bit hbit
+  rw [← ProvableType.getElem_eval_fields env.toEnvironment
+      ((paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b)[w]'hw) bit hbit,
+    ← ProvableType.getElem_eval_fields env'.toEnvironment
+      ((paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b)[w]'hw) bit hbit]
+  have hidx : b.val * 16 * 32 + w * 32 + bit < paddedBitsLen := by
+    have hb : b.val < 5 := b.isLt
+    have hw' : w < 16 := hw
+    have hbit' : bit < 32 := hbit
+    simp only [paddedBitsLen, paddedBlocksLen]
+    omega
+  have hbit_eq :
+      (((paddedBlock (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset) b)[w]'hw)[bit]'hbit) =
+        (varFromOffset (F := F circomPrime) (fields paddedBitsLen) offset :
+          fields paddedBitsLen (Expression (F circomPrime))).get
+          ⟨b.val * 16 * 32 + w * 32 + bit, hidx⟩ := by
+    unfold paddedBlock paddedBit
+    rw [Vector.getElem_ofFn, Vector.getElem_ofFn]
+    rfl
+  rw [hbit_eq, ProvableType.varFromOffset_fields]
+  have hget :
+      (Vector.mapRange paddedBitsLen (fun i =>
+          (var { index := offset + i } : Expression (F circomPrime)))
+        ).get ⟨b.val * 16 * 32 + w * 32 + bit, hidx⟩ =
+        (var { index := offset + (b.val * 16 * 32 + w * 32 + bit) } :
+          Expression (F circomPrime)) := by
+    simpa only using
+      (Vector.getElem_mapRange
+        (create := fun i => (var { index := offset + i } : Expression (F circomPrime)))
+        (b.val * 16 * 32 + w * 32 + bit) hidx)
+  rw [hget]
+  change env.get (offset + (b.val * 16 * 32 + w * 32 + bit)) =
+    env'.get (offset + (b.val * 16 * 32 + w * 32 + bit))
+  exact h_agree _ (by omega)
+
 /-- Final digest-selection step: if each candidate state's value equals the chain state,
 the selected digest word matches the SHA-256 spec output. -/
 lemma digest_final

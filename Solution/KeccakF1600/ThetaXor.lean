@@ -76,6 +76,50 @@ def circuit : FormalCircuit (F p) Inputs KeccakBitState where
   soundness := soundness
   completeness := completeness
 
+attribute [local irreducible] main XorLane.circuit
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.mapFinRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff]
+  intro i
+  refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
+    XorLane.circuit input ⟨input.state[i.val], input.d[i.val % 5]⟩ _ ?_ XorLane.computableWitnesses env env'
+  intro e1 e2 h_input
+  simp [circuit_norm] at h_input ⊢
+  refine ⟨?_, ?_⟩
+  · intro a ha
+    have hword :
+        Vector.map (Expression.eval e1.toEnvironment) input.state[i.val] =
+          Vector.map (Expression.eval e2.toEnvironment) input.state[i.val] := by
+      rw [← CircuitType.eval_var_fields e1.toEnvironment (input.state[i.val]),
+        ← CircuitType.eval_var_fields e2.toEnvironment (input.state[i.val])]
+      simpa [getElem_eval_vector] using
+        congrArg (fun s : KeccakBitState (F p) => s[i.val]'i.isLt) h_input.1
+    simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using Vector.ext_iff.mp hword b hb
+  · intro a ha
+    have hword :
+        Vector.map (Expression.eval e1.toEnvironment) input.d[i.val % 5] =
+          Vector.map (Expression.eval e2.toEnvironment) input.d[i.val % 5] := by
+      rw [← CircuitType.eval_var_fields e1.toEnvironment (input.d[i.val % 5]),
+        ← CircuitType.eval_var_fields e2.toEnvironment (input.d[i.val % 5])]
+      simpa [getElem_eval_vector] using
+        congrArg (fun s : KeccakBitRow (F p) => s[i.val % 5]'(by omega)) h_input.2
+    simp only [Vector.mem_iff_getElem] at ha
+    rcases ha with ⟨b, hb, hget⟩
+    rw [← hget]
+    simpa [Vector.getElem_map] using Vector.ext_iff.mp hword b hb
+
 end ThetaXor
 end Solution.KeccakF1600
 end

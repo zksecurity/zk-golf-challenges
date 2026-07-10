@@ -1,6 +1,7 @@
 import Solution.SHA256.ScheduleStep
 import Solution.SHA256.MessageScheduleTheorems
 import Challenge.Specs.SHA256
+import Challenge.Utils.ComputableWitnessLemmas
 
 section
 variable {p : ℕ} [Fact p.Prime] [Fact (p > 2^33)]
@@ -267,6 +268,55 @@ theorem completeness : Completeness (F p) (Input := SHA256Block) (Output := SHA2
 def circuit : FormalCircuit (F p) SHA256Block SHA256Schedule where
   main; elaborated; Assumptions; Spec; soundness;
   completeness := by simp only [completeness]
+
+attribute [local irreducible] main
+
+theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.foldlRange_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+    and_true]
+  intro i
+  rw [foldlAcc_eq_varSchedule_main offset input i.val i.isLt]
+  exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+    ScheduleStep.circuit input
+    ⟨(varSchedule offset input i.val).get ⟨i.val + 16 - 2, by omega⟩,
+      (varSchedule offset input i.val).get ⟨i.val + 16 - 7, by omega⟩,
+      (varSchedule offset input i.val).get ⟨i.val + 16 - 15, by omega⟩,
+      (varSchedule offset input i.val).get ⟨i.val + 16 - 16, by omega⟩⟩
+    (offset + i.val * (ScheduleStep.circuit (p := p)).localLength
+      ⟨(varSchedule offset input i.val).get ⟨i.val + 16 - 2, by omega⟩,
+        (varSchedule offset input i.val).get ⟨i.val + 16 - 7, by omega⟩,
+        (varSchedule offset input i.val).get ⟨i.val + 16 - 15, by omega⟩,
+        (varSchedule offset input i.val).get ⟨i.val + 16 - 16, by omega⟩⟩)
+    (by
+      intro k env env' hle h_agree h_input
+      have hstep : env.AgreesBelow (offset + i.val * 227) env' :=
+        ProverEnvironment.agreesBelow_of_le h_agree (by
+          simp [ScheduleStep.circuit, circuit_norm] at hle
+          simpa [ScheduleStep.circuit, circuit_norm] using hle)
+      simp [circuit_norm]
+      constructor
+      · exact eval_mem_varSchedule_of_agreesBelow (offset := offset) (k := i.val)
+          (by omega) hstep h_input (i.val + 16 - 2) (by omega) (by omega)
+      · constructor
+        · exact eval_mem_varSchedule_of_agreesBelow (offset := offset) (k := i.val)
+            (by omega) hstep h_input (i.val + 16 - 7) (by omega) (by omega)
+        · constructor
+          · exact eval_mem_varSchedule_of_agreesBelow (offset := offset) (k := i.val)
+              (by omega) hstep h_input (i.val + 16 - 15) (by omega) (by omega)
+          · exact eval_mem_varSchedule_of_agreesBelow (offset := offset) (k := i.val)
+              (by omega) hstep h_input (i.val + 16 - 16) (by omega) (by omega))
+    ScheduleStep.computableWitnesses env env'
 
 end MessageSchedule
 end Solution.SHA256

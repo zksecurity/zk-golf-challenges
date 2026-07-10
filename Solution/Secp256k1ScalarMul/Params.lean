@@ -94,6 +94,47 @@ def evalEmu (env : ProverEnvironment (F circomPrime))
   Limbs.fromLimbs limbBits
     ((x.map (Expression.eval env.toEnvironment)).toList.map ZMod.val)
 
+theorem evalEmu_eq_of_eval_eq {env env' : ProverEnvironment (F circomPrime)}
+    {x : Var Emu (F circomPrime)}
+    (h : eval env x = eval env' x) :
+    evalEmu env x = evalEmu env' x := by
+  have hmap :
+      x.map (Expression.eval env.toEnvironment) =
+        x.map (Expression.eval env'.toEnvironment) := by
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_map]
+    have h_i : (eval env x)[i] = (eval env' x)[i] := by
+      simpa only using congrArg (fun y : Emu (F circomPrime) => y[i]) h
+    rw [← ProvableType.getElem_eval_fields_prover (env := env) x i hi,
+      ← ProvableType.getElem_eval_fields_prover (env := env') x i hi] at h_i
+    exact h_i
+  simp [evalEmu, hmap]
+
+theorem emu_map_eval_eq_of_eval_eq {env env' : ProverEnvironment (F circomPrime)}
+    {x : Var Emu (F circomPrime)}
+    (h : eval env x = eval env' x) :
+    x.map (Expression.eval env.toEnvironment) =
+      x.map (Expression.eval env'.toEnvironment) := by
+  apply Vector.ext
+  intro i hi
+  simp only [Vector.getElem_map]
+  have h_i : (eval env x)[i] = (eval env' x)[i] := by
+    simpa only using congrArg (fun y : Emu (F circomPrime) => y[i]) h
+  rw [← ProvableType.getElem_eval_fields_prover (env := env) x i hi,
+    ← ProvableType.getElem_eval_fields_prover (env := env') x i hi] at h_i
+  exact h_i
+
+theorem eval_mem_of_map_eval_eq {m : ℕ} {env env' : ProverEnvironment (F circomPrime)}
+    {x : Vector (Expression (F circomPrime)) m}
+    (h : x.map (Expression.eval env.toEnvironment) =
+      x.map (Expression.eval env'.toEnvironment)) :
+    ∀ a ∈ x, Expression.eval env.toEnvironment a = Expression.eval env'.toEnvironment a := by
+  intro a ha
+  simp only [Vector.mem_iff_getElem] at ha
+  rcases ha with ⟨i, hi, rfl⟩
+  simpa only [Vector.getElem_map] using congrArg (fun y : Vector (F circomPrime) m => y[i]) h
+
 /-! ## Decoding to the trusted spec -/
 
 /-- Decode an emulated element to the secp256k1 base field of the trusted

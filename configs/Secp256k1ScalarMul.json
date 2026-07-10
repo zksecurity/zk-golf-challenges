@@ -5,7 +5,8 @@
         "Solution.Secp256k1ScalarMul.soundness",
         "Solution.Secp256k1ScalarMul.completeness",
         "Solution.Secp256k1ScalarMul.mainCost",
-        "Solution.Secp256k1ScalarMul.isR1CS"
+        "Solution.Secp256k1ScalarMul.isR1CS",
+        "Solution.Secp256k1ScalarMul.computableWitness"
     ],
     "definition_names": [
         "Solution.Secp256k1ScalarMul.main",

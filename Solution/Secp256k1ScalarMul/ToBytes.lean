@@ -1,5 +1,6 @@
 import Solution.Secp256k1ScalarMul.Params
 import Solution.Secp256k1ScalarMul.ToBytesTheorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # Byte decomposition of an emulated field element — `ToBytes`
@@ -132,6 +133,129 @@ theorem completeness :
 emulated field element. -/
 def circuit : FormalCircuit (F circomPrime) Emu (fields coordBytes) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+open Challenge.Utils.ComputableWitnessLemmas in
+/-- The Clean library `toBits n hn` circuit has computable witnesses: its sole
+witness `witnessVector n (fun env => fieldToBits n (x.eval env))` reads only the
+gadget input `x`; the boolean and recomposition constraints are assertions. -/
+private theorem toBits_computableWitnesses (n : ℕ) (hn : 2 ^ n < circomPrime) :
+    (Gadgets.ToBits.toBits (p := circomPrime) n hn).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((Gadgets.ToBits.main n input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold Gadgets.ToBits.main
+  simp only [
+    HasAssertEq.assert_eq, Expression.assertEquals,
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true]
+  refine ⟨?_, ?_, ?_⟩
+  · intro _ h_input
+    simp only [circuit_norm] at h_input
+    rw [h_input]
+  · intro i
+    rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+    simp only [circuit_norm, FlatOperation.forAll,
+      FormalCircuitBase.computableWitnessCondition, and_true]
+  · rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll,
+      Operations.forAll_toFlat_iff]
+    simp only [Gadgets.Equality.main, Operations.forAllFlat, circuit_norm,
+      FormalCircuitBase.computableWitnessCondition]
+
+open Challenge.Utils.ComputableWitnessLemmas in
+/-- The Clean library range-check assertion `rangeCheck n hn` has computable
+witnesses. Its `main` is `do let _ ← toBits n hn x`, so the only witnesses are
+those of the `toBits` subcircuit, discharged by `toBits_computableWitnesses`. -/
+private theorem rangeCheck_computableWitnesses (n : ℕ) (hn : 2 ^ n < circomPrime) :
+    (Gadgets.ToBits.rangeCheck (p := circomPrime) n hn).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
+  unfold Gadgets.ToBits.rangeCheck
+  simp only [Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff, and_true]
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    [.subcircuit ((Gadgets.toBits n hn).toSubcircuit offset input)]
+  simp only [FormalCircuitBase.Operations.StructuralComputableWitnesses, and_true]
+  rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+  unfold GeneralFormalCircuit.toSubcircuit GeneralFormalCircuit.WithHint.toSubcircuit
+  rw [Operations.toNested_toFlat, Operations.forAll_toFlat_iff]
+  exact toBits_computableWitnesses n hn offset input env env'
+
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.provableWitness_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.assertZero_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true, implies_true]
+  refine ⟨?_, ?_⟩
+  · -- the 32 witnessed bytes read only the input value
+    intro _ h_input
+    have hev : evalEmu env input = evalEmu env' input := evalEmu_eq_of_eval_eq h_input
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn, hev]
+  · -- forEach rangeCheck: each byte input is a previously-allocated witness cell
+    intro i
+    refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (Gadgets.ToBits.rangeCheck 8 (by decide)) input _ _ ?_
+      (rangeCheck_computableWitnesses 8 (by decide)) env env'
+    intro k e1 e2 hle h_agree _
+    have hk : offset + coordBytes ≤ k := by
+      simp only [circuit_norm, Gadgets.ToBits.rangeCheck, coordBytes] at hle ⊢
+      omega
+    have hmem := eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk
+    rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover]
+    exact hmem _ (Vector.getElem_mem i.isLt)
+
+theorem computableWitness : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+    Circuit.ComputableWitnesses (main input) n :=
+  Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (circuit := circuit.base) computableWitnesses
+
+open Challenge.Utils.ComputableWitnessLemmas in
+/-- The output of `ToBytes.main` is its first `coordBytes` witness cells (offsets
+`[offset, offset + coordBytes)`), so it is stable across environments agreeing
+below any `k ≥ offset + circuit.localLength offset`. Consumed by `ScalarMul`,
+which feeds these bytes into `Mux`. -/
+lemma eval_output_of_agreesBelow (x : Var Emu (F circomPrime)) {offset k : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : offset + circuit.localLength x ≤ k) :
+    eval env ((main x).output offset) = eval env' ((main x).output offset) := by
+  have hk32 : offset + coordBytes ≤ k := by
+    have hcl : circuit.localLength x = coordBytes + coordBytes * 8 := by
+      simp only [circuit, circuit_norm]
+    rw [hcl] at hk
+    omega
+  have hout : (main x).output offset
+      = varFromOffset (fields coordBytes) offset := rfl
+  rw [hout, CircuitType.eval_var_fields_prover, CircuitType.eval_var_fields_prover]
+  apply Vector.ext
+  intro i hi
+  rw [Vector.getElem_map, Vector.getElem_map]
+  exact eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk32 _
+    (Vector.getElem_mem hi)
 
 end ToBytes
 end Solution.Secp256k1ScalarMul

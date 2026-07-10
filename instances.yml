@@ -9,6 +9,7 @@ assert-bytes:
   files:
   - configs/AssertBytes.json
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/AssertBytes
   - Solution/AssertBytes
   content:
@@ -39,6 +40,7 @@ sha256-hash:
   - configs/SHA256.json
   - Challenge/Specs/SHA256.lean
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/SHA256
   - Solution/SHA256
   - Tests/SHA256.lean
@@ -128,6 +130,7 @@ keccak-f1600:
   - configs/KeccakF1600.json
   - Challenge/Specs/Keccak.lean
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/KeccakF1600
   - Solution/KeccakF1600
   - Tests/Keccak.lean
@@ -188,6 +191,7 @@ rsa-pkcs1v15-sha256-4096-65537:
   - configs/RSASSAPKCS1v15_SHA256_4096_65537.json
   - Challenge/Specs/RSASSAPKCS1v15.lean
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/RSASSAPKCS1v15_SHA256_4096_65537
   - Solution/RSASSAPKCS1v15_SHA256_4096_65537
   - Tests/RSA2048.lean
@@ -256,6 +260,7 @@ secp256k1-scalar-mul:
   - configs/Secp256k1ScalarMul.json
   - Challenge/Specs/Secp256k1.lean
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/Secp256k1ScalarMul
   - Solution/Secp256k1ScalarMul
   - Tests/Secp256k1.lean
@@ -347,6 +352,7 @@ secp256k1-fixed-base-scalar-mul:
   - configs/Secp256k1ScalarMulFixedBase.json
   - Challenge/Specs/Secp256k1.lean
   - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
   - Challenge/Instances/Secp256k1ScalarMulFixedBase
   - Solution/Secp256k1ScalarMulFixedBase
   - Tests/Secp256k1.lean

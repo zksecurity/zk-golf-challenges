@@ -1,4 +1,5 @@
 import Solution.Secp256k1ScalarMulFixedBase.Theorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA big-integer range-check gadget — `Normalize`
@@ -68,6 +69,36 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (BigIn
     intro i
     have := h_spec i
     rwa [← h_input, Vector.getElem_map] at this
+
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
+    Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff]
+  intro i
+  apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses
+  · intro env₁ env₂ h_input
+    have h : (eval env₁ input)[i.val] = (eval env₂ input)[i.val] := by
+      simpa only [Fin.getElem_fin] using congrArg (fun x : BigInt m (F p) => x[i]) h_input
+    rw [← ProvableType.getElem_eval_fields_prover (env := env₁) input i.val i.isLt,
+      ← ProvableType.getElem_eval_fields_prover (env := env₂) input i.val i.isLt] at h
+    simpa [CircuitType.eval_expression_prover_to_verifier (M := field),
+      CircuitType.eval_expression (M := field), ProvableType.eval, explicit_provable_type] using h
+  · exact rangeCheckComputableWitnesses P.B P.hB
+
+theorem computableWitness (P : BigIntParams p m) [Fact (p > 2)] : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F p) => eval env input) →
+    Circuit.ComputableWitnesses (main P input) n := by
+  exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnesses_implies
+    (computableWitnesses P)
 
 end Normalize
 

@@ -5,7 +5,8 @@
         "Solution.SHA256.soundness",
         "Solution.SHA256.completeness",
         "Solution.SHA256.mainCost",
-        "Solution.SHA256.isR1CS"
+        "Solution.SHA256.isR1CS",
+        "Solution.SHA256.computableWitness"
     ],
     "definition_names": [
         "Solution.SHA256.main",

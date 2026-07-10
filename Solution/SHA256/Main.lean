@@ -6,6 +6,7 @@ import Solution.SHA256.SelectDigest
 import Solution.SHA256.PaddingTheorems
 import Solution.SHA256.MainTheorems
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.ComputableWitnessLemmas
 
 namespace Solution.SHA256
 
@@ -262,6 +263,368 @@ theorem completeness :
       · exact st3_norm i
       · exact st4_norm i
       · exact st5_norm i
+
+attribute [local irreducible] main CheckPad.circuit CompressBlock.circuit SelectDigest.circuit
+
+private theorem checkPadComputableWitnesses :
+    (CheckPad.circuit (p := circomPrime)).ComputableWitnesses :=
+  CheckPad.computableWitnesses
+
+private theorem compressBlockComputableWitnesses :
+    (CompressBlock.circuit (p := circomPrime)).ComputableWitnesses :=
+  CompressBlock.computableWitnesses
+
+private theorem selectDigestComputableWitnesses :
+    (SelectDigest.circuit (p := circomPrime)).ComputableWitnesses :=
+  SelectDigest.computableWitnesses
+
+theorem computableWitness : ∀ n input,
+  ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+  Circuit.ComputableWitnesses (main input) n := by
+  intro n input hinput env env'
+  change (main input).operations n |>.forAllFlat n
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' n ((main input).operations n) := by
+    unfold main
+    let paddedCircuit : Circuit (F circomPrime) (Var SHA256PaddedBits (F circomPrime)) :=
+      witnessVector paddedBitsLen (paddedBitsWitness input)
+    let padded := paddedCircuit.output n
+    let lenFlagsOffset := n + paddedCircuit.localLength n
+    let lenFlagsCircuit : Circuit (F circomPrime) (Var (fields inputBufferLen) (F circomPrime)) :=
+      witnessVector inputBufferLen (lenFlagsWitness input)
+    let lenFlags := lenFlagsCircuit.output lenFlagsOffset
+    let checkPadOffset := lenFlagsOffset + lenFlagsCircuit.localLength lenFlagsOffset
+    let state0 : Var SHA256State (F circomPrime) :=
+      Vector.ofFn fun i => constWord32 Specs.SHA256.H0[i]
+    let state1Circuit : Circuit (F circomPrime) (Var SHA256State (F circomPrime)) :=
+      CompressBlock.circuit ⟨state0, paddedBlock padded 0⟩
+    let state1Offset := checkPadOffset +
+      (assertion CheckPad.circuit ⟨input.messageLen, input.message, lenFlags, padded⟩).localLength
+        checkPadOffset
+    let state1 := state1Circuit.output state1Offset
+    let state2Circuit : Circuit (F circomPrime) (Var SHA256State (F circomPrime)) :=
+      CompressBlock.circuit ⟨state1, paddedBlock padded 1⟩
+    let state2Offset := state1Offset + state1Circuit.localLength state1Offset
+    let state2 := state2Circuit.output state2Offset
+    let state3Circuit : Circuit (F circomPrime) (Var SHA256State (F circomPrime)) :=
+      CompressBlock.circuit ⟨state2, paddedBlock padded 2⟩
+    let state3Offset := state2Offset + state2Circuit.localLength state2Offset
+    let state3 := state3Circuit.output state3Offset
+    let state4Circuit : Circuit (F circomPrime) (Var SHA256State (F circomPrime)) :=
+      CompressBlock.circuit ⟨state3, paddedBlock padded 3⟩
+    let state4Offset := state3Offset + state3Circuit.localLength state3Offset
+    let state4 := state4Circuit.output state4Offset
+    let state5Circuit : Circuit (F circomPrime) (Var SHA256State (F circomPrime)) :=
+      CompressBlock.circuit ⟨state4, paddedBlock padded 4⟩
+    let state5Offset := state4Offset + state4Circuit.localLength state4Offset
+    let state5 := state5Circuit.output state5Offset
+    let digestOffset := state5Offset + state5Circuit.localLength state5Offset
+    let block0 : Fin paddedBlocksLen := 0
+    let block1 : Fin paddedBlocksLen := 1
+    let block2 : Fin paddedBlocksLen := 2
+    let block3 : Fin paddedBlocksLen := 3
+    let block4 : Fin paddedBlocksLen := 4
+    have h_checkPad := checkPadComputableWitnesses
+    have h_compressBlock := compressBlockComputableWitnesses
+    have h_selectDigest := selectDigestComputableWitnesses
+    have h_padded_before_state1 : n + paddedBitsLen ≤ state1Offset := by
+      have hpadded_len : paddedCircuit.localLength n = paddedBitsLen := rfl
+      dsimp [state1Offset, checkPadOffset, lenFlagsOffset]
+      rw [hpadded_len]
+      omega
+    have h_padded_before_state2 : n + paddedBitsLen ≤ state2Offset := by
+      dsimp [state2Offset]
+      omega
+    have h_padded_before_state3 : n + paddedBitsLen ≤ state3Offset := by
+      dsimp [state3Offset]
+      omega
+    have h_padded_before_state4 : n + paddedBitsLen ≤ state4Offset := by
+      dsimp [state4Offset]
+      omega
+    have h_padded_before_state5 : n + paddedBitsLen ≤ state5Offset := by
+      dsimp [state5Offset]
+      omega
+    have h_lenFlags_before_digest : lenFlagsOffset + inputBufferLen ≤ digestOffset := by
+      have hlen_len : lenFlagsCircuit.localLength lenFlagsOffset = inputBufferLen := rfl
+      dsimp [digestOffset, state5Offset, state4Offset, state3Offset, state2Offset,
+        state1Offset, checkPadOffset]
+      rw [hlen_len]
+      omega
+    have h_state1_len :
+        state1Circuit.localLength state1Offset = 48 * 227 + 64 * 455 + 8 * 33 := by
+      simp [state1Circuit, CompressBlock.circuit, circuit_norm]
+    have h_state2_len :
+        state2Circuit.localLength state2Offset = 48 * 227 + 64 * 455 + 8 * 33 := by
+      simp [state2Circuit, CompressBlock.circuit, circuit_norm]
+    have h_state3_len :
+        state3Circuit.localLength state3Offset = 48 * 227 + 64 * 455 + 8 * 33 := by
+      simp [state3Circuit, CompressBlock.circuit, circuit_norm]
+    have h_state4_len :
+        state4Circuit.localLength state4Offset = 48 * 227 + 64 * 455 + 8 * 33 := by
+      simp [state4Circuit, CompressBlock.circuit, circuit_norm]
+    have h_state5_len :
+        state5Circuit.localLength state5Offset = 48 * 227 + 64 * 455 + 8 * 33 := by
+      simp [state5Circuit, CompressBlock.circuit, circuit_norm]
+    have h_state1_end_before_state2 :
+        state1Offset + (48 * 227 + 64 * 455 + 8 * 33) ≤ state2Offset := by
+      dsimp [state2Offset]
+      rw [h_state1_len]
+    have h_state2_end_before_state3 :
+        state2Offset + (48 * 227 + 64 * 455 + 8 * 33) ≤ state3Offset := by
+      dsimp [state3Offset]
+      rw [h_state2_len]
+    have h_state3_end_before_state4 :
+        state3Offset + (48 * 227 + 64 * 455 + 8 * 33) ≤ state4Offset := by
+      dsimp [state4Offset]
+      rw [h_state3_len]
+    have h_state4_end_before_state5 :
+        state4Offset + (48 * 227 + 64 * 455 + 8 * 33) ≤ state5Offset := by
+      dsimp [state5Offset]
+      rw [h_state4_len]
+    have h_state5_end_before_digest :
+        state5Offset + (48 * 227 + 64 * 455 + 8 * 33) ≤ digestOffset := by
+      dsimp [digestOffset]
+      rw [h_state5_len]
+    have h_state2_before_state3 : state2Offset ≤ state3Offset := by
+      dsimp [state3Offset]
+      omega
+    have h_state3_before_state4 : state3Offset ≤ state4Offset := by
+      dsimp [state4Offset]
+      omega
+    have h_state4_before_state5 : state4Offset ≤ state5Offset := by
+      dsimp [state5Offset]
+      omega
+    have h_state5_before_digest : state5Offset ≤ digestOffset := by
+      exact le_trans (by omega : state5Offset ≤ state5Offset + (48 * 227 + 64 * 455 + 8 * 33))
+        h_state5_end_before_digest
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+      and_true]
+    and_intros
+    · intro _ h_input_eq
+      simp only [paddedBitsWitness]
+      have h_msg : eval env input.message = eval env' input.message := by
+        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.message) h_input_eq
+      have h_len : Expression.eval env.toEnvironment input.messageLen =
+          Expression.eval env'.toEnvironment input.messageLen := by
+        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.messageLen) h_input_eq
+      rw [h_msg, h_len]
+    · intro _ h_input_eq
+      simp only [lenFlagsWitness]
+      have h_len : Expression.eval env.toEnvironment input.messageLen =
+          Expression.eval env'.toEnvironment input.messageLen := by
+        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.messageLen) h_input_eq
+      rw [h_len]
+    · exact @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CheckPad.Inputs _ _
+        CheckPad.circuit input ⟨input.messageLen, input.message, lenFlags, padded⟩ checkPadOffset
+        (by
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          refine ⟨h_input_eq.2, h_input_eq.1, ?_, ?_⟩
+          · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+              (offset := lenFlagsOffset) (m := inputBufferLen) h_agree (by
+                simp [checkPadOffset, lenFlagsCircuit, circuit_norm] at hle ⊢
+                omega)
+          · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+              (offset := n) (m := paddedBitsLen) h_agree (by
+                simp [checkPadOffset, lenFlagsOffset, paddedCircuit, lenFlagsCircuit,
+                  circuit_norm] at hle ⊢
+                omega))
+        h_checkPad env env'
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CompressBlock.Inputs SHA256State _ _ _
+        CompressBlock.circuit input ⟨state0, paddedBlock padded 0⟩ state1Offset ?_ h_compressBlock env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          constructor
+          · apply Vector.ext
+            intro i hi
+            rw [← getElem_eval_vector (α := fields 32) env.toEnvironment state0 i hi,
+              ← getElem_eval_vector (α := fields 32) env'.toEnvironment state0 i hi]
+            apply Vector.ext
+            intro bit hbit
+            rw [← ProvableType.getElem_eval_fields env.toEnvironment (state0[i]'hi) bit hbit,
+              ← ProvableType.getElem_eval_fields env'.toEnvironment (state0[i]'hi) bit hbit]
+            simp only [state0]
+            rw [Vector.getElem_ofFn]
+            simp [constWord32, Expression.eval]
+          · apply Vector.ext
+            intro w hw
+            have hblock := paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+              (offset := n) h_agree (le_trans h_padded_before_state1 hle)
+              block0
+            have hblock' :
+                eval env.toEnvironment (paddedBlock padded 0) =
+                  eval env'.toEnvironment (paddedBlock padded 0) := by
+              simpa [padded, paddedCircuit, Circuit.witnessVector, circuit_norm] using hblock
+            simpa [getElem_eval_vector] using
+              congrArg (fun block : SHA256Block (F circomPrime) => block[w]'hw) hblock'
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CompressBlock.Inputs SHA256State _ _ _
+        CompressBlock.circuit input ⟨state1, paddedBlock padded 1⟩ state2Offset ?_
+        h_compressBlock env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          constructor
+          · simpa [state1, state1Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state0, paddedBlock padded 0⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree
+                  (le_trans h_state1_end_before_state2 hle))
+          · show eval env.toEnvironment (paddedBlock padded 1) =
+              eval env'.toEnvironment (paddedBlock padded 1)
+            simpa [padded, paddedCircuit, Circuit.witnessVector, circuit_norm] using
+              (paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+                (offset := n) h_agree (le_trans h_padded_before_state2 hle)
+                block1)
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CompressBlock.Inputs SHA256State _ _ _
+        CompressBlock.circuit input ⟨state2, paddedBlock padded 2⟩ state3Offset ?_
+        h_compressBlock env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          constructor
+          · simpa [state2, state2Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state1, paddedBlock padded 1⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree
+                  (le_trans h_state2_end_before_state3 hle))
+          · simpa [padded, paddedCircuit, Circuit.witnessVector, circuit_norm] using
+              paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+                (offset := n) h_agree (le_trans h_padded_before_state3 hle)
+                block2
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CompressBlock.Inputs SHA256State _ _ _
+        CompressBlock.circuit input ⟨state3, paddedBlock padded 3⟩ state4Offset ?_
+        h_compressBlock env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          constructor
+          · simpa [state3, state3Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state2, paddedBlock padded 2⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree
+                  (le_trans h_state3_end_before_state4 hle))
+          · simpa [padded, paddedCircuit, Circuit.witnessVector, circuit_norm] using
+              paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+                (offset := n) h_agree (le_trans h_padded_before_state4 hle)
+                block3
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input CompressBlock.Inputs SHA256State _ _ _
+        CompressBlock.circuit input ⟨state4, paddedBlock padded 4⟩ state5Offset ?_
+        h_compressBlock env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          constructor
+          · simpa [state4, state4Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state3, paddedBlock padded 3⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree
+                  (le_trans h_state4_end_before_state5 hle))
+          · simpa [padded, paddedCircuit, Circuit.witnessVector, circuit_norm] using
+              paddedBlock_varFromOffset_eval_eq_of_agreesBelow
+                (offset := n) h_agree (le_trans h_padded_before_state5 hle)
+                block4
+    · refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (F circomPrime) _ Input SelectDigest.Inputs (fields 8) _ _ _
+        SelectDigest.circuit input ⟨input.messageLen, lenFlags, state1, state2, state3, state4, state5⟩
+        digestOffset ?_ h_selectDigest env env'
+      ·
+          intro k env env' hle h_agree h_input_eq
+          simp [circuit_norm] at h_input_eq ⊢
+          refine ⟨h_input_eq.2, ?_, ?_, ?_, ?_, ?_, ?_⟩
+          · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+              (offset := lenFlagsOffset) (m := inputBufferLen) h_agree (by
+                exact le_trans h_lenFlags_before_digest hle)
+          · simpa [state1, state1Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state0, paddedBlock padded 0⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree (by
+                  exact le_trans
+                    (le_trans h_state1_end_before_state2
+                      (le_trans h_state2_before_state3
+                        (le_trans h_state3_before_state4
+                          (le_trans h_state4_before_state5 h_state5_before_digest))))
+                    hle))
+          · simpa [state2, state2Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state1, paddedBlock padded 1⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree (by
+                  exact le_trans
+                    (le_trans h_state2_end_before_state3
+                      (le_trans h_state3_before_state4
+                        (le_trans h_state4_before_state5 h_state5_before_digest)))
+                    hle))
+          · simpa [state3, state3Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state2, paddedBlock padded 2⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree (by
+                  exact le_trans
+                    (le_trans h_state3_end_before_state4
+                      (le_trans h_state4_before_state5 h_state5_before_digest))
+                    hle))
+          · simpa [state4, state4Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state3, paddedBlock padded 3⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree (by
+                  exact le_trans
+                    (le_trans h_state4_end_before_state5 h_state5_before_digest)
+                    hle))
+          · simpa [state5, state5Circuit] using
+              Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
+                ⟨state4, paddedBlock padded 4⟩
+                (ProverEnvironment.agreesBelow_of_le h_agree
+                  (le_trans h_state5_end_before_digest hle))
+  have hflat :=
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
+  unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
+  rw [← Operations.forAll_toFlat_iff] at hflat ⊢
+  let targetCondition : Condition (F circomPrime) :=
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
+  have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
+      n ≤ off →
+      FlatOperation.forAll off
+        (Condition.implies
+          (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition
+            input env env')
+          targetCondition).ignoreSubcircuit
+        ops := by
+    intro ops off hoff
+    induction ops generalizing off with
+    | nil => simp [FlatOperation.forAll]
+    | cons op ops ih =>
+      cases op with
+      | witness m compute =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          constructor
+          · intro hparent hagree
+            exact hparent hagree
+              (hinput env env' (ProverEnvironment.agreesBelow_of_le hagree hoff))
+          · exact ih (m + off) (by omega)
+      | assert e =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | lookup l =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | interact i =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+  exact himplies ((main input).operations n).toFlat n (le_refl n)
 
 end
 

@@ -1,5 +1,6 @@
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.MainTheorems
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Cost
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # Baseline solution — RSASSA-PKCS1-v1_5 / SHA256 / 4096 / e = 65537
@@ -327,5 +328,188 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   (fun _ _ => affineOutput_unit _)
 
 end Cost
+
+section ComputableWitness
+
+open Challenge.Utils.ComputableWitnessLemmas
+
+attribute [local irreducible] main BytesToBigInt.circuit PadDigest.circuit
+  LessThan.circuit Equal.circuit ModExp.circuit
+
+theorem computableWitness : ∀ n input,
+  ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+  Circuit.ComputableWitnesses (main input) n := by
+  intro n input hinput env env'
+  change (main input).operations n |>.forAllFlat n
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' n ((main input).operations n) := by
+    unfold main
+    -- name each subcircuit / assertion and its starting offset
+    let modCircuit : Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) :=
+      subcircuit BytesToBigInt.circuit input.modulus
+    let nOut := modCircuit.output n
+    let sigOffset := n + modCircuit.localLength n
+    let sigCircuit : Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) :=
+      subcircuit BytesToBigInt.circuit input.signature
+    let sigOut := sigCircuit.output sigOffset
+    let padOffset := sigOffset + sigCircuit.localLength sigOffset
+    let padCircuit : Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) :=
+      subcircuit PadDigest.circuit input.digest
+    let hOut := padCircuit.output padOffset
+    let ltOffset := padOffset + padCircuit.localLength padOffset
+    let ltCircuit : Circuit (F circomPrime) Unit :=
+      LessThan.circuit bigIntParams4096 { lhs := sigOut, rhs := nOut }
+    let recOffset := ltOffset + ltCircuit.localLength ltOffset
+    let recCircuit : Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) :=
+      subcircuit (ModExp.circuit params4096) { base := sigOut, modulus := nOut }
+    let recOut := recCircuit.output recOffset
+    let eqOffset := recOffset + recCircuit.localLength recOffset
+    -- ordering facts: each producing block ends before the consumer's offset
+    have hn_le_lt : n + Bytes.totalBits ≤ ltOffset := by
+      simp only [ltOffset, padOffset, sigOffset, modCircuit, sigCircuit, padCircuit,
+        BytesToBigInt.circuit, BytesToBigInt.elaborated,
+        PadDigest.circuit, PadDigest.elaborated, circuit_norm]
+      omega
+    have hsig_le_lt : sigOffset + Bytes.totalBits ≤ ltOffset := by
+      simp only [ltOffset, padOffset, sigOffset, modCircuit, sigCircuit, padCircuit,
+        BytesToBigInt.circuit, BytesToBigInt.elaborated,
+        PadDigest.circuit, PadDigest.elaborated, circuit_norm]
+      omega
+    have hpad_le_lt : padOffset + 256 ≤ ltOffset := by
+      simp only [ltOffset, padCircuit, PadDigest.circuit, PadDigest.elaborated, circuit_norm]
+      omega
+    have hlt_le_rec : ltOffset ≤ recOffset := Nat.le_add_right _ _
+    have hrec_le_eq : recOffset ≤ eqOffset := Nat.le_add_right _ _
+    have hn_le_rec : n + Bytes.totalBits ≤ recOffset := le_trans hn_le_lt hlt_le_rec
+    have hsig_le_rec : sigOffset + Bytes.totalBits ≤ recOffset := le_trans hsig_le_lt hlt_le_rec
+    have hn_le_eq : n + Bytes.totalBits ≤ eqOffset := le_trans hn_le_rec hrec_le_eq
+    have hsig_le_eq : sigOffset + Bytes.totalBits ≤ eqOffset := le_trans hsig_le_rec hrec_le_eq
+    have hpad_le_eq : padOffset + 256 ≤ eqOffset :=
+      le_trans (le_trans hpad_le_lt hlt_le_rec) hrec_le_eq
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff]
+    refine ⟨?op1, ?op2, ?op3, ?op4, ?op5, ?op6⟩
+    case op1 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        BytesToBigInt.circuit input input.modulus n ?_ BytesToBigInt.computableWitnesses env env'
+      intro k e1 e2 _ _ h_input_eq
+      simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.modulus) h_input_eq
+    case op2 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        BytesToBigInt.circuit input input.signature sigOffset ?_ BytesToBigInt.computableWitnesses env env'
+      intro k e1 e2 _ _ h_input_eq
+      simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.signature) h_input_eq
+    case op3 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        PadDigest.circuit input input.digest padOffset ?_ PadDigest.computableWitnesses env env'
+      intro k e1 e2 _ _ h_input_eq
+      simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.digest) h_input_eq
+    case op4 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+        (LessThan.circuit bigIntParams4096) input { lhs := sigOut, rhs := nOut } ltOffset ?_
+        (LessThan.computableWitnesses bigIntParams4096) env env'
+      intro k e1 e2 hle h_agree _
+      simp only [circuit_norm]
+      congr 1
+      · simpa only [sigOut, sigCircuit, circuit_norm] using
+          BytesToBigInt.eval_circuit_output_of_agreesBelow input.signature
+            (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hsig_le_lt hle))
+      · simpa only [nOut, modCircuit, circuit_norm] using
+          BytesToBigInt.eval_circuit_output_of_agreesBelow input.modulus
+            (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hn_le_lt hle))
+    case op5 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+        (ModExp.circuit params4096) input { base := sigOut, modulus := nOut } recOffset ?_
+        (ModExp.computableWitnesses params4096) env env'
+      intro k e1 e2 hle h_agree _
+      simp only [circuit_norm]
+      congr 1
+      · simpa only [sigOut, sigCircuit, circuit_norm] using
+          BytesToBigInt.eval_circuit_output_of_agreesBelow input.signature
+            (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hsig_le_rec hle))
+      · simpa only [nOut, modCircuit, circuit_norm] using
+          BytesToBigInt.eval_circuit_output_of_agreesBelow input.modulus
+            (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hn_le_rec hle))
+    case op6 =>
+      refine Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+        (Equal.circuit bigIntParams4096) input { lhs := recOut, rhs := hOut } eqOffset ?_
+        (Equal.computableWitnesses bigIntParams4096) env env'
+      intro k e1 e2 hle h_agree _
+      have h_me_input : eval e1 ({ base := sigOut, modulus := nOut } : Var (ModExp.Inputs numLimbs) (F circomPrime))
+          = eval e2 ({ base := sigOut, modulus := nOut } : Var (ModExp.Inputs numLimbs) (F circomPrime)) := by
+        simp only [circuit_norm]
+        congr 1
+        · simpa only [sigOut, sigCircuit, circuit_norm] using
+            BytesToBigInt.eval_circuit_output_of_agreesBelow input.signature
+              (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hsig_le_eq hle))
+        · simpa only [nOut, modCircuit, circuit_norm] using
+            BytesToBigInt.eval_circuit_output_of_agreesBelow input.modulus
+              (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hn_le_eq hle))
+      simp only [circuit_norm]
+      congr 1
+      · -- Bound the env agreement using the *generic* subcircuit-localLength lemma,
+        -- so the kernel never reduces `ModExp`'s operations.
+        have hagree_me : e1.AgreesBelow
+            (recOffset + (ModExp.circuit params4096).localLength { base := sigOut, modulus := nOut }) e2 := by
+          apply ProverEnvironment.agreesBelow_of_le h_agree
+          rw [← subcircuit_localLength_eq (ModExp.circuit params4096)
+            { base := sigOut, modulus := nOut } recOffset]
+          exact hle
+        have hrec := ModExp.eval_circuit_output_of_agreesBelow params4096 { base := sigOut, modulus := nOut }
+          h_me_input hagree_me
+        have hgoal_eq : recOut
+            = (ModExp.circuit params4096).output { base := sigOut, modulus := nOut } recOffset :=
+          subcircuit_output_eq (ModExp.circuit params4096) { base := sigOut, modulus := nOut } recOffset
+        rw [hgoal_eq]
+        simp only [circuit_norm] at hrec ⊢
+        exact hrec
+      · simpa only [hOut, padCircuit, circuit_norm] using
+          PadDigest.eval_circuit_output_of_agreesBelow input.digest
+            (ProverEnvironment.agreesBelow_of_le h_agree (le_trans hpad_le_eq hle))
+  -- reduce the flattened structural condition to the target `forAllFlat` condition
+  have hflat :=
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
+  unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
+  rw [← Operations.forAll_toFlat_iff] at hflat ⊢
+  let targetCondition : Condition (F circomPrime) :=
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
+  have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
+      n ≤ off →
+      FlatOperation.forAll off
+        (Condition.implies
+          (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition
+            input env env')
+          targetCondition).ignoreSubcircuit
+        ops := by
+    intro ops off hoff
+    induction ops generalizing off with
+    | nil => simp [FlatOperation.forAll]
+    | cons op ops ih =>
+      cases op with
+      | witness m compute =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          constructor
+          · intro hparent hagree
+            exact hparent hagree
+              (hinput env env' (ProverEnvironment.agreesBelow_of_le hagree hoff))
+          · exact ih (m + off) (by omega)
+      | assert e =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | lookup l =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | interact i =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+  exact himplies ((main input).operations n).toFlat n (le_refl n)
+
+end ComputableWitness
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537

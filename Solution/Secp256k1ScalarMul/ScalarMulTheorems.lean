@@ -131,6 +131,92 @@ lemma foldlAcc_eq_accVar (i₀ : ℕ) (px py : Emu (Expression (F circomPrime)))
   simp only [step_localLength, step_output]
   exact fin_foldl_eq_accVar i₀ i.val
 
+/-- `Circuit.FoldlM.foldlAcc` of the `ScalarMul` fold body equals `accVar`,
+stated with the loop binder `bit := bits[j]` (`Fin`-indexed), matching the
+`main` fold body syntactically for the `computableWitnesses` proof. -/
+lemma foldlAcc_eq_accVar_main (i₀ : ℕ) (px py : Emu (Expression (F circomPrime)))
+    (bits : Vector (Expression (F circomPrime)) Specs.Secp256k1.scalarBits)
+    (i : Fin Specs.Secp256k1.scalarBits) :
+    Circuit.FoldlM.foldlAcc (β := Var FlaggedPoint (F circomPrime)) i₀
+      (Vector.finRange Specs.Secp256k1.scalarBits)
+      (fun (acc : Var FlaggedPoint (F circomPrime)) (j : Fin Specs.Secp256k1.scalarBits) =>
+        subcircuit Step.circuit { acc := acc, px := px, py := py, bit := bits[j] })
+      infConst i = accVar i₀ i.val := by
+  simp only [Circuit.FoldlM.foldlAcc, Vector.getElem_finRange]
+  simp only [circuit_norm]
+  simp only [step_localLength, step_output]
+  exact fin_foldl_eq_accVar i₀ i.val
+
+/-! ## Computable-witness support -/
+
+/-- A fresh `FlaggedPoint` witness block reads only its own `size FlaggedPoint`
+cells, so it is stable across environments agreeing below `off + size`. -/
+private lemma fpVar_stable {off k : ℕ} {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow k env') (hk : off + 9 ≤ k) :
+    eval env ((varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))))
+      = eval env' ((varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime)))) := by
+  rw [CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint),
+    CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint), ProvableType.ext_iff]
+  intro i hi
+  rw [← ProvableType.getElem_eval_toElements
+      (varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))) i hi,
+    ← ProvableType.getElem_eval_toElements
+      (varFromOffset FlaggedPoint off : FlaggedPoint (Expression (F circomPrime))) i hi]
+  simp only [varFromOffset, ProvableType.toElements_fromElements, Vector.getElem_mapRange,
+    Expression.eval]
+  have hsz : size FlaggedPoint = 9 := rfl
+  rw [hsz] at hi
+  exact h_agree (off + i) (by omega)
+
+/-- The variable-level fold accumulator after `k` steps is stable across
+environments agreeing below `i₀ + k * 31959` (the offset just past step `k`'s
+witness block): for `k = 0` it is the constant point at infinity, and for
+`k ≥ 1` it is a fresh 9-cell block ending exactly at `i₀ + k * 31959`. -/
+lemma eval_accVar_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
+    eval env (accVar i₀ k) = eval env' (accVar i₀ k) := by
+  cases k with
+  | zero =>
+    simp only [accVar]
+    rw [CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint),
+      CircuitType.eval_expression_prover_to_verifier (M := FlaggedPoint), ProvableType.ext_iff]
+    intro i hi
+    rw [← ProvableType.getElem_eval_toElements
+        (infConst : Var FlaggedPoint (F circomPrime)) i hi,
+      ← ProvableType.getElem_eval_toElements
+        (infConst : Var FlaggedPoint (F circomPrime)) i hi]
+    have hsz : size FlaggedPoint = 9 := rfl
+    rw [hsz] at hi
+    rcases i with _|_|_|_|_|_|_|_|_|i <;> first | rfl | omega
+  | succ k =>
+    simp only [accVar]
+    exact fpVar_stable h_agree (by omega)
+
+/-- The `x` coordinate of the fold accumulator is stable under agreement. -/
+lemma eval_accVar_x_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
+    eval env (accVar i₀ k).x = eval env' (accVar i₀ k).x := by
+  have h := eval_accVar_of_agreesBelow i₀ k h_agree
+  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
+  simpa only [circuit_norm] using h.1
+
+/-- The `y` coordinate of the fold accumulator is stable under agreement. -/
+lemma eval_accVar_y_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
+    eval env (accVar i₀ k).y = eval env' (accVar i₀ k).y := by
+  have h := eval_accVar_of_agreesBelow i₀ k h_agree
+  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
+  simpa only [circuit_norm] using h.2.1
+
+/-- The is-infinity flag of the fold accumulator is stable under agreement. -/
+lemma eval_accVar_isInf_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
+    (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
+    Expression.eval env.toEnvironment (accVar i₀ k).isInf
+      = Expression.eval env'.toEnvironment (accVar i₀ k).isInf := by
+  have h := eval_accVar_of_agreesBelow i₀ k h_agree
+  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
+  simpa only [circuit_norm] using h.2.2
+
 /-- The fold term as it appears in the *goal* after `circuit_proof_start` +
 numeral normalization (the elaborated output unfolds `varFromOffset` to
 `Vector.mapRange`, with the step offset split as `15975 + 15975`), rewritten

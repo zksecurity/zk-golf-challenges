@@ -211,5 +211,141 @@ def circuit : FormalCircuit (F circomPrime) (fields digestBytesLen) (BigInt numL
   main, elaborated, Assumptions, Spec, soundness, completeness
 }
 
+attribute [local irreducible] ByteBlock.circuit
+
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses : circuit.ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true]
+  refine ⟨?wbits, ?block⟩
+  case wbits =>
+    intro _ h_input
+    have hbytes : ∀ (j : ℕ) (hj : j < digestBytesLen),
+        Expression.eval env.toEnvironment (input[j]'hj) = Expression.eval env'.toEnvironment (input[j]'hj) := by
+      intro j hj
+      have := congrArg (fun v : Vector (F circomPrime) digestBytesLen => v[j]'hj) h_input
+      simpa only [circuit_norm, Vector.getElem_map] using this
+    simp only [digestBitsWitness]
+    apply Vector.ext
+    intro i hi
+    simp only [Vector.getElem_ofFn]
+    by_cases hj : 31 - i / 8 < digestBytesLen
+    · rw [dif_pos hj, dif_pos hj, hbytes _ hj]
+    · rw [dif_neg hj, dif_neg hj]
+  case block =>
+    have hlen : (witnessVector 256 (digestBitsWitness input)).localLength offset = 256 := by
+      simp only [circuit_norm]
+    set digBits := (witnessVector 256 (digestBitsWitness input)).output offset with hDigBits
+    rw [hlen]
+    have hcond : ∀ (k : ℕ) (e1 e2 : ProverEnvironment (F circomPrime)),
+        offset + 256 ≤ k → e1.AgreesBelow k e2 →
+        eval e1 input = eval e2 input →
+        eval e1 ({ bytes := input, bits := digBits } : Var ByteBlock.Inputs (F circomPrime))
+          = eval e2 ({ bytes := input, bits := digBits } : Var ByteBlock.Inputs (F circomPrime)) := by
+      intro k e1 e2 hle h_agree h_input
+      have hbits : ∀ (q : ℕ) (hq : q < 256),
+          Expression.eval e1.toEnvironment (digBits[q]'hq) = Expression.eval e2.toEnvironment (digBits[q]'hq) := by
+        intro q hq
+        have hvar : digBits[q]'hq = var (F := F circomPrime) { index := offset + q } := by
+          rw [hDigBits]; simp only [circuit_norm]
+        rw [hvar]
+        simp only [Expression.eval]
+        exact h_agree (offset + q) (by omega)
+      have hbs_map : Vector.map (Expression.eval e1.toEnvironment) input
+          = Vector.map (Expression.eval e2.toEnvironment) input := by
+        simpa only [circuit_norm] using h_input
+      have hbt_map : Vector.map (Expression.eval e1.toEnvironment) digBits
+          = Vector.map (Expression.eval e2.toEnvironment) digBits := by
+        apply Vector.ext; intro l hl
+        rw [Vector.getElem_map, Vector.getElem_map]
+        exact hbits _ _
+      simp only [circuit_norm, hbs_map, hbt_map]
+    have result := @FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
+      (F circomPrime) _ (fields digestBytesLen) ByteBlock.Inputs _ _
+      ByteBlock.circuit input ({ bytes := input, bits := digBits } : Var ByteBlock.Inputs (F circomPrime))
+      (offset + 256) hcond ByteBlock.computableWitnesses
+    exact result env env'
+
+/-- `Bytes.packLimbs` is affine over the bit variables, so its evaluation agrees
+under any two environments that agree on all `totalBits` bit variables. -/
+lemma eval_packLimbs_congr {env env' : Environment (F circomPrime)}
+    (bits : Vector (Expression (F circomPrime)) totalBits)
+    (h : ∀ (p : ℕ) (hp : p < totalBits),
+      Expression.eval env (bits[p]'hp) = Expression.eval env' (bits[p]'hp)) :
+    ∀ (k : ℕ) (hk : k < numLimbs),
+      Expression.eval env ((Bytes.packLimbs bits)[k]'hk)
+        = Expression.eval env' ((Bytes.packLimbs bits)[k]'hk) := by
+  intro k hk
+  unfold Bytes.packLimbs
+  rw [Vector.getElem_ofFn, BytesLemmas.eval_foldl_add, BytesLemmas.eval_foldl_add]
+  apply Finset.sum_congr rfl
+  intro i _
+  by_cases hi : limbBits * k + i.val < totalBits
+  · rw [dif_pos hi]
+    simp only [Expression.eval]
+    rw [h _ hi]
+  · rw [dif_neg hi]
+    simp only [Expression.eval]
+
+/-- Vector-level agreement of the `PadDigest` output (`packLimbs` of the EM bits,
+which mix the witnessed digest bits with constant PKCS#1 frame bits). Mirrors
+`MulMod.eval_output_of_agreesBelow`. -/
+lemma eval_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F circomPrime)}
+    (digest : Var (fields digestBytesLen) (F circomPrime))
+    (h_agree : env.AgreesBelow (offset + 256) env') :
+    eval env.toEnvironment ((main digest).output offset)
+      = eval env'.toEnvironment ((main digest).output offset) := by
+  have hout : (main digest).output offset
+      = Bytes.packLimbs (Bytes.emBits (varFromOffset (fields 256) offset)) := by
+    simp only [main, circuit_norm]
+  rw [hout]
+  have hbits : ∀ (q : ℕ) (hq : q < 256),
+      Expression.eval env.toEnvironment
+          ((varFromOffset (fields 256) offset : Var (fields 256) (F circomPrime))[q]'hq)
+        = Expression.eval env'.toEnvironment
+          ((varFromOffset (fields 256) offset : Var (fields 256) (F circomPrime))[q]'hq) := by
+    intro q hq
+    exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
+      h_agree (le_refl _) _ (Vector.getElem_mem hq)
+  have hemb : ∀ (p : ℕ) (hp : p < totalBits),
+      Expression.eval env.toEnvironment
+          ((Bytes.emBits (varFromOffset (fields 256) offset))[p]'hp)
+        = Expression.eval env'.toEnvironment
+          ((Bytes.emBits (varFromOffset (fields 256) offset))[p]'hp) := by
+    intro p hp
+    simp only [Bytes.emBits, Vector.getElem_ofFn]
+    by_cases hpp : p < 256
+    · rw [dif_pos hpp]; exact hbits p hpp
+    · rw [dif_neg hpp]; simp only [Expression.eval]
+  rw [CircuitType.eval_var_fields, CircuitType.eval_var_fields]
+  apply Vector.ext
+  intro k hk
+  rw [Vector.getElem_map, Vector.getElem_map]
+  exact eval_packLimbs_congr _ hemb k hk
+
+/-- Circuit-level (subcircuit) output agreement, bridging `eval_output_of_agreesBelow`
+through `elaborated.output_eq`. Mirrors `CompressBlock.eval_circuit_output_of_agreesBelow`;
+used by `Main`. -/
+lemma eval_circuit_output_of_agreesBelow {offset : ℕ}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (digest : Var (fields digestBytesLen) (F circomPrime))
+    (h_agree : env.AgreesBelow (offset + 256) env') :
+    eval env.toEnvironment (circuit.output digest offset)
+      = eval env'.toEnvironment (circuit.output digest offset) := by
+  change eval env.toEnvironment (ElaboratedCircuit.output main digest offset) =
+    eval env'.toEnvironment (ElaboratedCircuit.output main digest offset)
+  rw [← elaborated.output_eq digest offset]
+  exact eval_output_of_agreesBelow digest h_agree
+
 end PadDigest
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537

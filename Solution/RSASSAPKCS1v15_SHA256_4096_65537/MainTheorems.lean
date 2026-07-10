@@ -100,6 +100,24 @@ namespace Solution.RSASSAPKCS1v15_SHA256_4096_65537
 open Challenge.Instances.RSASSAPKCS1v15_SHA256_4096_65537.Interface
 open Solution.RSASSAPKCS1v15_SHA256_4096_65537
 
+/-- Generic (circuit-abstract) projection of a subcircuit's output: it equals the
+child circuit's declared output. Proved with the circuit abstract, so the `rfl`
+is checked once, cheaply — a later instantiation at a heavy child (e.g. `ModExp`)
+is a plain substitution and never forces the kernel to unfold the child's
+operations. Used by `Main.computableWitness` to keep `ModExp`'s output opaque. -/
+theorem subcircuit_output_eq {F : Type} [Field F] {β α : TypeMap}
+    [ProvableType β] [ProvableType α]
+    (c : FormalCircuit F β α) (b : Var β F) (n : ℕ) :
+    (subcircuit c b).output n = c.output b n := rfl
+
+/-- Companion to `subcircuit_output_eq`: the subcircuit's flat local length equals
+the child's declared `localLength`. Also proved circuit-abstract, so instantiating
+it at `ModExp` never forces the kernel to build `ModExp`'s operations. -/
+theorem subcircuit_localLength_eq {F : Type} [Field F] {β α : TypeMap}
+    [ProvableType β] [ProvableType α]
+    (c : FormalCircuit F β α) (b : Var β F) (n : ℕ) :
+    (subcircuit c b).localLength n = c.localLength b := rfl
+
 /-- The circom prime exceeds 2 (needed by the comparison/carry gadgets). -/
 instance : Fact (circomPrime > 2) := ⟨by norm_num [circomPrime]⟩
 

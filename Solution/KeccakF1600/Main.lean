@@ -5,6 +5,7 @@ import Solution.KeccakF1600.Cost
 import Solution.KeccakF1600.Permutation
 import Solution.KeccakF1600.PermutationCost
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.ComputableWitnessLemmas
 
 namespace Solution.KeccakF1600
 
@@ -58,6 +59,77 @@ theorem completeness :
     exact StateNormalized_toLanes input_state fun i => h_bits i
   rw [eval_keccakState]
   exact init_norm
+
+attribute [local irreducible] Permutation.circuit in
+theorem computableWitness : ∀ n input,
+    ProverEnvironment.OnlyAccessedBelow n
+      (fun env : ProverEnvironment (F circomPrime) => eval env input) →
+    Circuit.ComputableWitnesses (main input) n := by
+  intro n input hinput env env'
+  change (main input).operations n |>.forAllFlat n
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  have hstruct :
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
+        input env env' n ((main input).operations n) := by
+    unfold main
+    simp only [
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
+      Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
+      and_true]
+    refine @Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
+      (F circomPrime) _ Input KeccakBitState KeccakBitState _ _ _
+      Permutation.circuit input (toLanes input.state) n ?_
+      Permutation.computableWitnesses env env'
+    intro kk e e' hle h_agree h_input
+    rw [CircuitType.eval_var_prover_to_verifier (M := KeccakBitState) (env := e)
+          (v := toLanes input.state),
+        CircuitType.eval_var_prover_to_verifier (M := KeccakBitState) (env := e')
+          (v := toLanes input.state),
+        eval_keccakState e.toEnvironment (toLanes input.state),
+        eval_keccakState e'.toEnvironment (toLanes input.state),
+        eval_toLanes_vec, eval_toLanes_vec]
+    congr 1
+    have hstate := congrArg (fun x : Input (F circomPrime) => x.state) h_input
+    simpa [circuit_norm] using hstate
+  have hflat :=
+    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+      input env env' hstruct
+  unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
+  rw [← Operations.forAll_toFlat_iff] at hflat ⊢
+  let targetCondition : Condition (F circomPrime) :=
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+  apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
+  have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
+      n ≤ off →
+      FlatOperation.forAll off
+        (Condition.implies
+          (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition
+            input env env')
+          targetCondition).ignoreSubcircuit
+        ops := by
+    intro ops off hoff
+    induction ops generalizing off with
+    | nil => simp [FlatOperation.forAll]
+    | cons op ops ih =>
+      cases op with
+      | witness m compute =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          constructor
+          · intro hparent hagree
+            exact hparent hagree
+              (hinput env env' (ProverEnvironment.agreesBelow_of_le hagree hoff))
+          · exact ih (m + off) (by omega)
+      | assert e =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | lookup l =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+      | interact i =>
+          simp only [FlatOperation.forAll, Condition.implies, Condition.ignoreSubcircuit]
+          exact ⟨by intro _; trivial, ih off hoff⟩
+  exact himplies ((main input).operations n).toFlat n (le_refl n)
 
 end
 

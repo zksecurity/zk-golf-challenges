@@ -1,4 +1,5 @@
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Theorems
+import Challenge.Utils.ComputableWitnessLemmas
 
 /-!
 # RSA big-integer range-check gadget — `Normalize`
@@ -69,8 +70,31 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (BigIn
     have := h_spec i
     rwa [← h_input, Vector.getElem_map] at this
 
+open Challenge.Utils.ComputableWitnessLemmas in
+theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
+    (circuit P).ComputableWitnesses := by
+  intro offset input env env'
+  change Operations.forAllFlat offset
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((main P input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold main
+  simp only [
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff]
+  intro i
+  exact FormalAssertion.assertion_flatStructuralComputableWitnesses
+    (Gadgets.ToBits.rangeCheck P.B P.hB) input (input[i.val]) _
+    (by
+      intro env₁ env₂ h_input
+      rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover,
+          ProvableType.getElem_eval_fields_prover input i.val i.isLt,
+          ProvableType.getElem_eval_fields_prover input i.val i.isLt, h_input])
+    (Solution.RSASSAPKCS1v15_SHA256_4096_65537.rangeCheck_computableWitnesses P.B P.hB) env env'
+
 end Normalize
 
 end
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
+
