@@ -297,25 +297,34 @@ secp256k1-scalar-mul:
     allocations: 8182144
     constraints: 8279944
   comparison_points:
-  - name: gnark (R1CS)
-    score: 294879
+  - name: gnark (R1CS, no lookups)
+    score: 1311228
     caveats: "Consensys gnark v0.15.0 `sw_emulated.ScalarMul` for secp256k1 emulated\n\
-      over the BN254 scalar field, compiled to R1CS with `r1cs.NewBuilder`\n(the same\
-      \ rank-1 constraint system Groth16 uses): 117350 constraints and\n177529 internal\
-      \ variables, so score = allocations + constraints = 294879.\n\n`ScalarMul` uses\
-      \ the GLV + fake-GLV endomorphism method, and this is its\n*complete*-arithmetic\
-      \ cost (the default), which handles the exceptional\ncases (point at infinity,\
-      \ P = \xB1Q), the fair match to this challenge's\ntotal spec. The *incomplete*\
-      \ variant (`WithIncompleteArithmetic`, faster\nbut undefined on the exceptional\
-      \ set) is 56221 constraints; that is the\n~60k figure sometimes quoted, but\
-      \ it does not compute the total relation.\n\nInterface differences make this\
-      \ a lower bound on a full solution:\n- gnark takes the scalar and point as emulated\
-      \ field elements, while the\n  challenge takes the scalar as 256 bits and the\
-      \ point as big-endian\n  bytes and must decode/encode them (extra range checks\
-      \ + recomposition).\n- gnark exposes no point-at-infinity flag and does not\
-      \ enforce a\n  canonical, unique byte encoding of the output; the challenge\
-      \ does both.\n- \"allocations\" is gnark's internal-variable count (interface\
-      \ inputs\n  excluded, as in the challenge score).\n"
+      over the BN254 scalar field, compiled with `r1cs.NewBuilder` after\nforcing\
+      \ `std/rangecheck` to use its plain bit-decomposition checker:\n653070 constraints\
+      \ and 658158 internal variables, so score = allocations\n+ constraints = 1311228.\
+      \ The measurement also made\n`logderivarg.Build` fail immediately and compiled\
+      \ successfully, confirming\nthat no log-derivative lookup argument remained.\n\
+      \ngnark's default R1CS builder implements `frontend.Committer`, so an\nunmodified\
+      \ compile silently selects LogUp-style range checks. That path\nreports only\
+      \ 117350 constraints and 177529 internal variables (score\n294879), but is not\
+      \ a lookup-free comparison for this challenge.\n\n`ScalarMul` uses the GLV +\
+      \ fake-GLV endomorphism method, and this is its\n*complete*-arithmetic cost\
+      \ (the default), which handles the exceptional\ncases (point at infinity, P\
+      \ = \xB1Q). The no-lookup *incomplete* variant\n(`WithIncompleteArithmetic`)\
+      \ has 316703 constraints and 320019 internal\nvariables (score 636722), but\
+      \ is undefined on the exceptional set and\ndoes not compute the challenge's\
+      \ total relation.\n\nOne proof-system caveat remains: gnark uses a Committer-derived\
+      \ random\nchallenge to batch its emulated-field multiplication identities. This\
+      \ is\nnot a lookup, but it has no analogue in zkGolf's deterministic circuit\n\
+      model, so the comparison is not perfectly apples-to-apples.\n\nThe interfaces\
+      \ also differ:\n- gnark takes the scalar and point as emulated field elements,\
+      \ while the\n  challenge takes the scalar as 256 bits and the point as big-endian\n\
+      \  bytes and must decode/encode them (extra range checks + recomposition).\n\
+      - gnark exposes no point-at-infinity flag and does not enforce a\n  canonical,\
+      \ unique byte encoding of the output; the challenge does both.\n- \"allocations\"\
+      \ is gnark's internal-variable count (interface inputs\n  excluded, as in the\
+      \ challenge score).\n"
   - name: circom-ecdsa (R1CS)
     score: 2790986
     caveats: '0xPARC circom-ecdsa `Secp256k1ScalarMult(64, 4)` (n=64-bit, k=4-limb
@@ -326,9 +335,9 @@ secp256k1-scalar-mul:
 
       1391545 + 1399441 = 2790986. This is the classic Circom/Groth16 baseline
 
-      (windowed double-and-add, no endomorphism); the gnark GLV figure above is
+      (windowed double-and-add, no endomorphism); the no-lookup gnark GLV figure
 
-      ~9x smaller.
+      above is about 2.1x smaller.
 
 
       Same interface differences as the gnark entry: the scalar is 4 x 64-bit
@@ -404,22 +413,33 @@ secp256k1-fixed-base-scalar-mul:
       \  `ECDSAPrivToPub` assumes a non-zero scalar and a valid affine result.\n-\
       \ \"allocations\" is circom's wire count (interface inputs included);\n  \"\
       constraints\" is the non-linear (R1CS) count.\n"
-  - name: gnark (R1CS)
-    score: 292542
+  - name: gnark (R1CS, no lookups)
+    score: 1299680
     caveats: 'Consensys gnark v0.15.0 `sw_emulated.ScalarMulBase` (fixed generator,
 
-      complete arithmetic), compiled to R1CS: 116402 constraints and 176140
+      complete arithmetic), compiled with the plain bit-decomposition range
 
-      internal variables, score 292542. For emulated curves gnark''s fixed-base
+      checker and with `logderivarg.Build` forbidden: 647309 constraints and
 
-      path is only marginally cheaper than variable-base (both ~117k
+      652371 internal variables, score 1299680. The unmodified R1CS builder
 
-      constraints): the generator multiples are constants but the arithmetic is
+      instead uses LogUp-style range checks and reports 116402 constraints plus
 
-      still non-native, so circom-ecdsa''s precomputed table (above) wins for
+      176140 internal variables (score 292542), which is not the comparison
 
-      fixed-base. Same interface caveats as the gnark variable-base entry
+      shown here.
 
-      (emulated-field inputs, no infinity flag, no canonical byte encoding).
+
+      The generator multiples are constants, but the arithmetic remains
+
+      non-native, so circom-ecdsa''s precomputed table (above) wins for fixed
+
+      base. The same caveats as the variable-base gnark entry apply: emulated
+
+      field inputs, no infinity flag or canonical byte encoding, and a
+
+      Committer-derived random challenge for batching emulated multiplication
+
+      identities even though lookups are disabled.
 
       '
