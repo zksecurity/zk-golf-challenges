@@ -1,0 +1,21 @@
+{
+    "challenge_module": "Challenge.Instances.KangarooTwelveGF2.Challenge",
+    "solution_module": "Solution.KangarooTwelveGF2.Main",
+    "theorem_names": [
+        "Solution.KangarooTwelveGF2.soundness",
+        "Solution.KangarooTwelveGF2.completeness",
+        "Solution.KangarooTwelveGF2.mainCost",
+        "Solution.KangarooTwelveGF2.isR1CS_Cidentity",
+        "Solution.KangarooTwelveGF2.computableWitness"
+    ],
+    "definition_names": [
+        "Solution.KangarooTwelveGF2.main",
+        "Solution.KangarooTwelveGF2.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+    ],
+    "enable_nanoda": false
+}

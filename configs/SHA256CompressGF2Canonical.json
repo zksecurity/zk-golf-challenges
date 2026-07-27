@@ -1,0 +1,21 @@
+{
+    "challenge_module": "Challenge.Instances.SHA256CompressGF2Canonical.Challenge",
+    "solution_module": "Solution.SHA256CompressGF2Canonical.Main",
+    "theorem_names": [
+        "Solution.SHA256CompressGF2Canonical.soundness",
+        "Solution.SHA256CompressGF2Canonical.completeness",
+        "Solution.SHA256CompressGF2Canonical.mainCost",
+        "Solution.SHA256CompressGF2Canonical.isR1CS_Cidentity",
+        "Solution.SHA256CompressGF2Canonical.computableWitness"
+    ],
+    "definition_names": [
+        "Solution.SHA256CompressGF2Canonical.main",
+        "Solution.SHA256CompressGF2Canonical.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+    ],
+    "enable_nanoda": false
+}

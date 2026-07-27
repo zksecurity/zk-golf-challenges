@@ -443,3 +443,107 @@ secp256k1-fixed-base-scalar-mul:
       identities even though lookups are disabled.
 
       '
+gf2-sha256-compress-canonical:
+  type: public
+  instance: SHA256CompressGF2Canonical
+  config: configs/SHA256CompressGF2Canonical.json
+  cost: Challenge/Instances/SHA256CompressGF2Canonical/Cost.lean
+  namespace: Solution.SHA256CompressGF2Canonical
+  files:
+  - configs/SHA256CompressGF2Canonical.json
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
+  - Challenge/Utils/CostR1CSRow.lean
+  - Challenge/Utils/CostR1CSCanonicalSpec.lean
+  - Challenge/Utils/CostR1CSCanonical.lean
+  - Challenge/Utils/CostR1CSCanonicalGuarantees.lean
+  - Challenge/Utils/F2Bits.lean
+  - Challenge/Instances/SHA256CompressGF2Canonical
+  - Solution/SHA256CompressGF2
+  - Solution/SHA256CompressGF2Canonical
+  content:
+    title: SHA-256 Compression
+    description: "# SHA-256 Compression, Canonical (identity-C) Form\n\nBuild an R1CS-over-GF(2)\
+      \ circuit that accepts a 256-bit chaining value `h`\nand a 512-bit message block\
+      \ `m`, and outputs the chaining value after one\nSHA-256 compression. There\
+      \ is no padding or message-length handling.\n\n```lean\nstructure Input (F :\
+      \ Type) where\n  h : Vector F 256\n  m : Vector F 512\n\nstructure Output (F\
+      \ : Type) where\n  h : Vector F 256\n```\n\nWords are packed little-endian (bit\
+      \ `32\xB7i+j` is bit `j` of word `i`).\nOver `F 2`, every element is already\
+      \ a bit, so there are no public-input\nassumptions. The circuit must compute\n\
+      `output.h = compressBlock(input.h, input.m)`.\n\n## Additional C = I constraint\n\
+      \nAn ordinary R1CS row permits `C` to be any affine combination in\n`A * B =\
+      \ C`. This challenge additionally requires the ordered\n`isR1CS_Cidentity` shape:\
+      \ row `t` must use exactly `var (n0 + t)` as `C`.\nProduct rows therefore have\
+      \ the form\n`A * B = var (n0 + t)`, and affine copy rows use\n`A * 1 = var (n0\
+      \ + t)`.\n\nThis is the Flock encoding discipline. ANDs and materialized sums\
+      \ must be\nwitnessed, while XORs and other affine combinations may be inlined\
+      \ into\n`A` or `B`. In particular, a 32-bit ripple-carry add uses 31 product\
+      \ rows\nplus 31 carry-copy rows.\n"
+    tags:
+    - hash
+    - sha256
+    - gf2
+  baseline:
+    allocations: 47952
+    constraints: 47952
+  comparison_points:
+  - name: Flock SHA-256 (interface-normalized)
+    score: 61264
+    caveats: '[Flock''s pinned SHA-256 encoder](https://github.com/succinctlabs/flock/blob/410a133e6a0c96b1a1a6577c1a761b8bd47470ff/crates/flock-prover/src/r1cs_hashes/sha2.rs#L107-L118)
+
+      uses a padded matrix size of 32,768 and declares 31,401 useful rows.
+
+      This graph point excludes its 768 caller-provided input slots and one
+
+      constant row, while retaining the 256 materialized output slots that
+
+      zkGolf also counts. The interface-normalized cost pair is 30,632
+
+      allocations and 30,632 constraints, for a score of 61,264 under this
+
+      challenge''s additive scoring rule.
+
+      '
+gf2-k12-compress-canonical:
+  type: public
+  instance: KangarooTwelveGF2
+  config: configs/KangarooTwelveGF2.json
+  cost: Challenge/Instances/KangarooTwelveGF2/Cost.lean
+  namespace: Solution.KangarooTwelveGF2
+  files:
+  - configs/KangarooTwelveGF2.json
+  - Challenge/Specs/KangarooTwelve.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
+  - Challenge/Utils/CostR1CSRow.lean
+  - Challenge/Utils/CostR1CSCanonicalSpec.lean
+  - Challenge/Utils/CostR1CSCanonical.lean
+  - Challenge/Utils/CostR1CSCanonicalGuarantees.lean
+  - Challenge/Utils/F2Bits.lean
+  - Challenge/Instances/KangarooTwelveGF2
+  - Solution/KangarooTwelveGF2
+  - Tests/KangarooTwelve.lean
+  content:
+    title: KangarooTwelve Permutation
+    description: "# KangarooTwelve permutation over GF(2)\nBuild a canonical R1CS-over-GF(2)\
+      \ circuit for the 12-round\nKeccak-p[1600] permutation used by KangarooTwelve.\n\
+      \n## Interface\n\n```lean\nstructure Input (F : Type) where\n  state : Vector\
+      \ F 1600\n\nstructure Output (F : Type) where\n  state : Vector F 1600\n```\n\
+      \nThe state layout is the RFC 9861 Keccak state layout: lane `(x, y)` occupies\n\
+      bits `64 * (x + 5 * y)` through `64 * (x + 5 * y) + 63`, little-endian inside\n\
+      the 64-bit lane. There are no public-input assumptions.\n\n```lean\ndef Spec\
+      \ (input : Input (F 2)) (output : Output (F 2)) (_ : ProverData (F 2)) : Prop\
+      \ :=\n  output.state = Specs.KangarooTwelve.keccakP1600_12 input.state\n```\n\
+      \n## Additional C = I constraint\n\nAn ordinary R1CS row permits `C` to be any\
+      \ affine combination in\n`A * B = C`. This challenge additionally requires the\
+      \ ordered\n`isR1CS_Cidentity` shape: row `t` must use exactly `var (n0 + t)`\
+      \ as `C`.\nProduct rows therefore have the form\n`A * B = var (n0 + t)`, and\
+      \ affine copy rows use\n`A * 1 = var (n0 + t)`.\n"
+    tags:
+    - hash
+    - kangaroo-twelve
+    - gf2
+  baseline:
+    allocations: 19200
+    constraints: 19200
