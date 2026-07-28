@@ -1,0 +1,21 @@
+{
+    "challenge_module": "Challenge.Instances.Blake3CompressGF2Canonical.Challenge",
+    "solution_module": "Solution.Blake3CompressGF2Canonical.Main",
+    "theorem_names": [
+        "Solution.Blake3CompressGF2Canonical.soundness",
+        "Solution.Blake3CompressGF2Canonical.completeness",
+        "Solution.Blake3CompressGF2Canonical.mainCost",
+        "Solution.Blake3CompressGF2Canonical.isR1CS_Cidentity",
+        "Solution.Blake3CompressGF2Canonical.computableWitness"
+    ],
+    "definition_names": [
+        "Solution.Blake3CompressGF2Canonical.main",
+        "Solution.Blake3CompressGF2Canonical.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+    ],
+    "enable_nanoda": false
+}

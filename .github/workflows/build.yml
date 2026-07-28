@@ -35,4 +35,4 @@ jobs:
       - name: Build public Lean project
         run: |
           lake exe cache get
-          lake build Challenge Solution
+          lake build Challenge Solution Tests

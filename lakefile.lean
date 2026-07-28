@@ -11,6 +11,7 @@ package Circuits where
 lean_lib Challenge where
   globs := #[.submodules `Challenge]
 
+@[default_target]
 lean_lib Tests where
   globs := #[.submodules `Tests]
 

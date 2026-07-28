@@ -505,6 +505,70 @@ gf2-sha256-compress-canonical:
       challenge''s additive scoring rule.
 
       '
+gf2-blake3-compress-canonical:
+  type: public
+  instance: Blake3CompressGF2Canonical
+  config: configs/Blake3CompressGF2Canonical.json
+  cost: Challenge/Instances/Blake3CompressGF2Canonical/Cost.lean
+  namespace: Solution.Blake3CompressGF2Canonical
+  files:
+  - configs/Blake3CompressGF2Canonical.json
+  - Challenge/Specs/Blake3.lean
+  - Challenge/Utils/CostR1CS.lean
+  - Challenge/Utils/ComputableWitnessLemmas.lean
+  - Challenge/Utils/CostR1CSRow.lean
+  - Challenge/Utils/CostR1CSCanonicalSpec.lean
+  - Challenge/Utils/CostR1CSCanonical.lean
+  - Challenge/Utils/CostR1CSCanonicalGuarantees.lean
+  - Challenge/Utils/F2Bits.lean
+  - Challenge/Instances/Blake3CompressGF2Canonical
+  - Solution/Blake3CompressGF2Canonical
+  - Tests/Blake3.lean
+  content:
+    title: BLAKE3 Compression
+    description: "# BLAKE3 Compression over GF(2)\n\nBuild a canonical R1CS-over-GF(2)\
+      \ circuit for one BLAKE3 compression.\nThe input is 896 raw bits and the output\
+      \ is all 512 compression bits.\n\n```lean\nstructure Input (F : Type) where\n\
+      \  bits : Vector F 896\n\nstructure Output (F : Type) where\n  bits : Vector\
+      \ F 512\n```\n\nInput words are ordered as the 8-word chaining value, 16-word\
+      \ message\nblock, low and high 32-bit counter halves, block length, and flags.\n\
+      Words and bytes are little-endian: bit `32 * i + j` is bit `j` of word\n`i`.\
+      \ Over `F 2`, every element is already a bit, so there are no\npublic-input\
+      \ assumptions.\n\n## Additional C = I constraint\n\nThe ordered `isR1CS_Cidentity`\
+      \ obligation requires constraint row `t`\nto use exactly `var (n0 + t)` as its\
+      \ C-side. Product rows have the form\n`A * B = var (n0 + t)`, and affine copy\
+      \ rows use\n`A * 1 = var (n0 + t)`.\n"
+    tags:
+    - hash
+    - blake3
+    - gf2
+  baseline:
+    allocations: 86880
+    constraints: 86880
+  comparison_points:
+  - name: Flock BLAKE3 (interface-normalized)
+    score: 29024
+    caveats: '[Flock''s pinned BLAKE3 encoder](https://github.com/succinctlabs/flock/blob/410a133e6a0c96b1a1a6577c1a761b8bd47470ff/crates/flock-prover/src/r1cs_hashes/blake3.rs#L64-L74)
+
+      uses identity C. Its
+
+      [layout](https://github.com/succinctlabs/flock/blob/410a133e6a0c96b1a1a6577c1a761b8bd47470ff/crates/flock-prover/src/r1cs_hashes/blake3.rs#L167-L186)
+
+      has 15,409 useful slots: 896 input bits, one constant, 14,000 G-function
+
+      slots, and 512 materialized output bits. Flock leaves
+
+      [public-input pinning to its outer protocol](https://github.com/succinctlabs/flock/blob/410a133e6a0c96b1a1a6577c1a761b8bd47470ff/crates/flock-prover/src/r1cs_hashes/blake3.rs#L85-L89),
+
+      so this graph point excludes the 896 input slots and constant row while
+
+      retaining the full output. The interface-normalized cost pair is 14,512
+
+      allocations and 14,512 constraints, for a score of 29,024 under this
+
+      challenge''s additive scoring rule.
+
+      '
 gf2-k12-compress-canonical:
   type: public
   instance: KangarooTwelveGF2
