@@ -57,6 +57,17 @@ theorem completeness : Completeness (F p) main Assumptions := by
 def circuit : FormalCircuit (F p) Inputs (fields 64) where
   main; elaborated; Assumptions; Spec; soundness; completeness
 
+/-- Componentwise characterization of "the two environments evaluate the input
+equally". `circuit_norm` no longer reduces `eval` on a struct *variable*, so this
+is proved once here by destructuring and reused by the callers. -/
+lemma eval_inputs_iff {input : Var Inputs (F p)} {env env' : ProverEnvironment (F p)} :
+    eval env input = eval env' input ↔
+      ((∀ x ∈ input.a, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x) ∧
+       (∀ x ∈ input.b, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x) ∧
+       (∀ x ∈ input.c, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x)) := by
+  obtain ⟨a, b, c⟩ := input
+  simp [circuit_norm, explicit_provable_type]
+
 theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
   intro offset input env env'
   change Operations.forAllFlat offset
@@ -77,21 +88,22 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       AndLane.circuit input firstInput offset
       (by
         intro env env' h_input
-        simp [circuit_norm] at h_input ⊢
+        rw [eval_inputs_iff] at h_input
+        rw [AndLane.eval_inputs_iff]
         constructor
         · intro a ha
           simp only [firstInput, notBits, Vector.mem_map] at ha
           obtain ⟨b, hb, rfl⟩ := ha
           have heq := h_input.2.1 b hb
-          simp [Expression.eval, heq]
+          simp [circuit_norm, heq]
         · exact h_input.2.2)
       AndLane.computableWitnesses env env'
   · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
       XorLane.circuit input ⟨input.a, r1⟩ n1
       (by
         intro k env env' hle h_agree h_input
-        simp [circuit_norm] at h_input
-        simp [circuit_norm]
+        rw [eval_inputs_iff] at h_input
+        rw [XorLane.eval_inputs_iff]
         constructor
         · exact h_input.1
         · have hlen : first.localLength offset = 64 := by

@@ -40,7 +40,7 @@ instance elaborated : ElaboratedCircuit (F p2) (fields 512) (fields 512) main :=
       (stepWord i₀ 8) (stepWord i₀ 9) (stepWord i₀ 10) (stepWord i₀ 11)
       (stepWord i₀ 12) (stepWord i₀ 13) (stepWord i₀ 14) (stepWord i₀ 15)
   } using by
-    refine ⟨fun a => rfl, fun a n => ?_, ?_, ?_⟩
+    refine ⟨fun a => rfl, fun a n => ?_, ?_⟩
     · have hfold : (Fin.foldl 16
           (fun (acc : Vector (fields 32 (Expression (F p2))) 32) (i : Fin 16) =>
             acc.set (16 + i.val)
@@ -66,8 +66,7 @@ instance elaborated : ElaboratedCircuit (F p2) (fields 512) (fields 512) main :=
         varBuf_out n a 13 (by norm_num) 16 (by norm_num) (by norm_num),
         varBuf_out n a 14 (by norm_num) 16 (by norm_num) (by norm_num),
         varBuf_out n a 15 (by norm_num) 16 (by norm_num) (by norm_num)]
-    · simp only [circuit_norm]
-    · simp only [circuit_norm]
+    · intro a ha; exact ha
 
 def Assumptions (_ : fields 512 (F p2)) : Prop := True
 
@@ -182,15 +181,12 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     ((main input).operations offset)
   apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
   unfold main
-  simp only [
-    Circuit.bind_structuralComputableWitnesses_iff,
-    Circuit.foldlRange_structuralComputableWitnesses_iff,
-    FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
-    Circuit.pure_structuralComputableWitnesses_iff,
-    ScheduleStepCanon.subcircuit_localLength, and_true]
+  -- `circuit_norm` puts the loop body in the same normal form as `constantLength`,
+  -- which is what lets the loop-peeling lemma below match.
+  simp only [circuit_norm, Circuit.foldlRange_structuralComputableWitnesses_iff]
   intro i
   obtain ⟨iv, hiv⟩ := i
-  rw [foldlAcc_eq_varBuf_do offset input iv hiv]
+  rw [foldlAcc_eq_varBuf offset input iv hiv]
   refine FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
     ScheduleStepCanon.circuit input _ _ ?_ ScheduleStepCanon.computableWitnesses env env'
   intro kk e e' hle h_agree h_input

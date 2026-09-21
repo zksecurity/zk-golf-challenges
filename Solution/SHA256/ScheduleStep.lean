@@ -124,6 +124,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       LowerSigma1.circuit input input.wm2 offset
       (by
         intro env env' h_input
+        obtain ⟨w2, w7, w15, w16⟩ := input
         simp [circuit_norm] at h_input ⊢
         exact h_input.1)
       LowerSigma1.computableWitnesses env env'
@@ -131,6 +132,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       LowerSigma0.circuit input input.wm15 n1
       (by
         intro env env' h_input
+        obtain ⟨w2, w7, w15, w16⟩ := input
         simp [circuit_norm] at h_input ⊢
         exact h_input.2.2.1)
       LowerSigma0.computableWitnesses env env'
@@ -138,6 +140,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       Add32.circuit input ⟨s1, input.wm7⟩ n2
       (by
         intro k env env' hle h_agree h_input
+        obtain ⟨w2, w7, w15, w16⟩ := input
         simp [circuit_norm] at h_input ⊢
         constructor
         · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
@@ -150,6 +153,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       Add32.circuit input ⟨sum0, s0⟩ n3
       (by
         intro k env env' hle h_agree h_input
+        obtain ⟨w2, w7, w15, w16⟩ := input
         simp [circuit_norm] at h_input ⊢
         constructor
         · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
@@ -167,6 +171,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       Add32.circuit input ⟨sum1, input.wm16⟩ n4
       (by
         intro k env env' hle h_agree h_input
+        obtain ⟨w2, w7, w15, w16⟩ := input
         simp [circuit_norm] at h_input ⊢
         constructor
         · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow

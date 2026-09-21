@@ -35,7 +35,7 @@ theorem soundness (n : ℕ) [NeZero n] :
   have hi := h_holds i
   have hval : input[i.val] = Expression.eval env input_var[i.val] := by
     rw [← h_input, Vector.getElem_map]
-  rw [hval, IsBool.iff_mul_sub_one, sub_eq_add_neg]
+  rw [hval, IsBool.iff_mul_sub_one]
   exact hi
 
 theorem completeness (n : ℕ) [NeZero n] :
@@ -45,7 +45,7 @@ theorem completeness (n : ℕ) [NeZero n] :
   have hb := h_spec i
   have hval : input[i.val] = Expression.eval env.toEnvironment input_var[i.val] := by
     rw [← h_input, Vector.getElem_map]
-  rw [hval, IsBool.iff_mul_sub_one, sub_eq_add_neg] at hb
+  rw [hval, IsBool.iff_mul_sub_one] at hb
   exact hb
 
 def circuit (n : ℕ) [NeZero n] : FormalAssertion (F p) (fields n) :=

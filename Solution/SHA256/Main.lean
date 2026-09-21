@@ -6,6 +6,7 @@ import Solution.SHA256.SelectDigest
 import Solution.SHA256.PaddingTheorems
 import Solution.SHA256.MainTheorems
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 import Challenge.Utils.ComputableWitnessLemmas
 
 namespace Solution.SHA256
@@ -15,8 +16,10 @@ open Challenge.Instances.SHA256.Interface
 section
 
 def main (input : Var Input (F circomPrime)) : Circuit (F circomPrime) (Var Output (F circomPrime)) := do
-  let padded ← witnessVector paddedBitsLen (paddedBitsWitness input)
-  let lenFlags ← witnessVector inputBufferLen (lenFlagsWitness input)
+  let padded ← Circuit.witnessVector paddedBitsLen (paddedBitsIR input)
+  -- one-hot length flags: a single equality test per index, inline in the IR
+  let lenFlags ← Circuit.witnessVector inputBufferLen
+    (.range inputBufferLen fun i => .ite (i =? input.messageLen.val) 1 0)
   CheckPad.circuit ⟨input.messageLen, input.message, lenFlags, padded⟩
   let state0 : Var SHA256State (F circomPrime) :=
     Vector.ofFn fun i => constWord32 Specs.SHA256.H0[i]
@@ -132,9 +135,33 @@ theorem completeness :
     GeneralFormalCircuit.Completeness (F circomPrime) main
       ProverAssumptions ProverSpec := by
   circuit_proof_start
-  obtain ⟨h_pad_env, h_flags_env, h_c1, h_c2, h_c3, h_c4, h_c5, _h_sd⟩ := h_env
   obtain ⟨⟨h_msg_assum, h_len_assum⟩, _h_pad_zeros⟩ := h_assumptions
   obtain ⟨h_msg_eq, h_msgLen_eq⟩ := h_input
+  -- the two bounds the u64 witness sort needs, straight from the assumptions: the
+  -- message is a byte string and the length is below the buffer length
+  have hbyte : ∀ k (hk : k < inputBufferLen),
+      ZMod.val (Expression.eval env.toEnvironment
+        ({ message := input_var_message, messageLen := input_var_messageLen } :
+          Var Input (F circomPrime)).message[k]) < 2 ^ 64 := by
+    intro k hk
+    have hb : ZMod.val input_message[k] < 256 := by
+      simpa [fieldElemsToNat, Vector.getElem_map] using h_msg_assum ⟨k, hk⟩
+    show ZMod.val (Expression.eval env.toEnvironment input_var_message[k]) < 2 ^ 64
+    rw [show Expression.eval env.toEnvironment input_var_message[k] = input_message[k] from by
+      rw [← h_msg_eq]; simp]
+    omega
+  have hlen : ZMod.val (Expression.eval env.toEnvironment
+      ({ message := input_var_message, messageLen := input_var_messageLen } :
+        Var Input (F circomPrime)).messageLen) < 2 ^ 32 := by
+    show ZMod.val (Expression.eval env.toEnvironment input_var_messageLen) < 2 ^ 32
+    rw [h_msgLen_eq]
+    have := h_len_assum
+    simp only [inputBufferLen] at this
+    omega
+  -- read the padded-bit cells through the bridge lemma for the IR generator; the
+  -- length flags are a literal equality test that `circuit_proof_start` already read
+  simp only [getElem_eval_paddedBitsWitness _ env hbyte hlen] at h_env
+  obtain ⟨h_pad_env, h_flags_env, h_c1, h_c2, h_c3, h_c4, h_c5, _h_sd⟩ := h_env
   set msg := Vector.map ZMod.val input_message with hmsg
   set ℓ := ZMod.val input_messageLen with hℓ
   set pvar : Var SHA256PaddedBits (F circomPrime) :=
@@ -147,10 +174,6 @@ theorem completeness :
       = paddedBitsValue msg ℓ := by
     simp only [paddedBitsWitness]
     rw [hb, h_msgLen_eq]
-  have hfwit : lenFlagsWitness { message := input_var_message, messageLen := input_var_messageLen } env
-      = lenFlagsValue ℓ := by
-    simp only [lenFlagsWitness]
-    rw [h_msgLen_eq]
   -- padded witness evaluates to paddedBitsValue msg ℓ
   have h_pad_val : Vector.map (Expression.eval env.toEnvironment) pvar = paddedBitsValue msg ℓ := by
     rw [← hbwit]
@@ -161,12 +184,15 @@ theorem completeness :
     exact h_pad_env ⟨i, hi⟩
   -- lenFlags witness evaluates to lenFlagsValue ℓ
   have h_flags_val : Vector.map (Expression.eval env.toEnvironment) fvar = lenFlagsValue ℓ := by
-    rw [← hfwit]
     apply Vector.ext
     intro i hi
     rw [hfvar, Vector.getElem_map, Vector.getElem_mapRange]
     rw [show Expression.eval env.toEnvironment (var { index := i₀ + paddedBitsLen + i }) = env.get (i₀ + paddedBitsLen + i) from rfl]
-    exact h_flags_env ⟨i, hi⟩
+    rw [h_flags_env ⟨i, hi⟩, lenFlagsValue, Vector.getElem_ofFn]
+    -- the one-hot test runs in the u64 sort; both operands are far below 2^64
+    have hl256 : ℓ < 256 := by simpa [inputBufferLen] using h_len_assum
+    rw [Nat.mod_eq_of_lt (show i < 2 ^ 64 by simp only [inputBufferLen] at hi; omega),
+      Nat.mod_eq_of_lt (show ℓ < 2 ^ 64 by omega)]
   -- message bytes < 256
   have h_msg256 : ∀ i : Fin inputBufferLen, msg[i] < 256 := by
     intro i; have := h_msg_assum i
@@ -278,22 +304,28 @@ private theorem selectDigestComputableWitnesses :
     (SelectDigest.circuit (p := circomPrime)).ComputableWitnesses :=
   SelectDigest.computableWitnesses
 
+-- The chained per-block offsets (`state1Offset .. state5Offset`) make the kernel's
+-- own defeq check on this proof nest about four times deeper than Lean 4.32 did,
+-- overflowing the default recursion budget. `maxRecDepth` bounds that stack (it is
+-- not the heartbeat budget and does not weaken the check itself).
+set_option maxRecDepth 8000 in
 theorem computableWitness : ∀ n input,
   ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
   Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct :
       Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
         input env env' n ((main input).operations n) := by
     unfold main
     let paddedCircuit : Circuit (F circomPrime) (Var SHA256PaddedBits (F circomPrime)) :=
-      witnessVector paddedBitsLen (paddedBitsWitness input)
+      Circuit.witnessVector paddedBitsLen (paddedBitsIR input)
     let padded := paddedCircuit.output n
     let lenFlagsOffset := n + paddedCircuit.localLength n
     let lenFlagsCircuit : Circuit (F circomPrime) (Var (fields inputBufferLen) (F circomPrime)) :=
-      witnessVector inputBufferLen (lenFlagsWitness input)
+      Circuit.witnessVector inputBufferLen
+        (.range inputBufferLen fun i => .ite (i =? input.messageLen.val) 1 0)
     let lenFlags := lenFlagsCircuit.output lenFlagsOffset
     let checkPadOffset := lenFlagsOffset + lenFlagsCircuit.localLength lenFlagsOffset
     let state0 : Var SHA256State (F circomPrime) :=
@@ -408,24 +440,39 @@ theorem computableWitness : ∀ n input,
       and_true]
     and_intros
     · intro _ h_input_eq
-      simp only [paddedBitsWitness]
       have h_msg : eval env input.message = eval env' input.message := by
-        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.message) h_input_eq
+        obtain ⟨_msg, _len⟩ := input
+        simp [circuit_norm] at h_input_eq ⊢
+        exact h_input_eq.1
       have h_len : Expression.eval env.toEnvironment input.messageLen =
           Expression.eval env'.toEnvironment input.messageLen := by
-        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.messageLen) h_input_eq
-      rw [h_msg, h_len]
+        obtain ⟨_msg, _len⟩ := input
+        simp [circuit_norm] at h_input_eq
+        exact h_input_eq.2
+      -- the witness vector reads only the message and its length (congruence bridge;
+      -- the *value* bridge is not available here, it needs bounds this obligation has
+      -- no assumptions to supply)
+      rw [CircuitType.eval_var_fields_prover, CircuitType.eval_var_fields_prover] at h_msg
+      refine eval_paddedBitsIR_congr input env env' (fun x hx => ?_) h_len
+      obtain ⟨k, hk, rfl⟩ := List.getElem_of_mem hx
+      rw [Vector.length_toList] at hk
+      have := congrArg (fun v : Vector (F circomPrime) inputBufferLen => v[k]'hk) h_msg
+      simpa [Vector.getElem_map, Vector.getElem_toList] using this
     · intro _ h_input_eq
-      simp only [lenFlagsWitness]
       have h_len : Expression.eval env.toEnvironment input.messageLen =
           Expression.eval env'.toEnvironment input.messageLen := by
-        simpa [circuit_norm] using congrArg (fun x : Input (F circomPrime) => x.messageLen) h_input_eq
-      rw [h_len]
+        obtain ⟨_msg, _len⟩ := input
+        simp [circuit_norm] at h_input_eq
+        exact h_input_eq.2
+      -- the flag cells are the literal equality test, so they read only the length
+      refine Vector.ext fun i hi => ?_
+      simp only [circuit_norm, h_len]
     · exact @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
         (F circomPrime) _ Input CheckPad.Inputs _ _
         CheckPad.circuit input ⟨input.messageLen, input.message, lenFlags, padded⟩ checkPadOffset
         (by
           intro k env env' hle h_agree h_input_eq
+          obtain ⟨_msg, _len⟩ := input
           simp [circuit_norm] at h_input_eq ⊢
           refine ⟨h_input_eq.2, h_input_eq.1, ?_, ?_⟩
           · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
@@ -475,7 +522,7 @@ theorem computableWitness : ∀ n input,
           intro k env env' hle h_agree h_input_eq
           simp [circuit_norm] at h_input_eq ⊢
           constructor
-          · simpa [state1, state1Circuit] using
+          · simpa [state1, state1Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state0, paddedBlock padded 0⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree
@@ -494,7 +541,7 @@ theorem computableWitness : ∀ n input,
           intro k env env' hle h_agree h_input_eq
           simp [circuit_norm] at h_input_eq ⊢
           constructor
-          · simpa [state2, state2Circuit] using
+          · simpa [state2, state2Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state1, paddedBlock padded 1⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree
@@ -511,7 +558,7 @@ theorem computableWitness : ∀ n input,
           intro k env env' hle h_agree h_input_eq
           simp [circuit_norm] at h_input_eq ⊢
           constructor
-          · simpa [state3, state3Circuit] using
+          · simpa [state3, state3Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state2, paddedBlock padded 2⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree
@@ -528,7 +575,7 @@ theorem computableWitness : ∀ n input,
           intro k env env' hle h_agree h_input_eq
           simp [circuit_norm] at h_input_eq ⊢
           constructor
-          · simpa [state4, state4Circuit] using
+          · simpa [state4, state4Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state3, paddedBlock padded 3⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree
@@ -543,12 +590,13 @@ theorem computableWitness : ∀ n input,
         digestOffset ?_ h_selectDigest env env'
       ·
           intro k env env' hle h_agree h_input_eq
+          obtain ⟨_msg, _len⟩ := input
           simp [circuit_norm] at h_input_eq ⊢
           refine ⟨h_input_eq.2, ?_, ?_, ?_, ?_, ?_, ?_⟩
           · exact Challenge.Utils.ComputableWitnessLemmas.eval_mem_varFromOffset_fields_of_agreesBelow
               (offset := lenFlagsOffset) (m := inputBufferLen) h_agree (by
                 exact le_trans h_lenFlags_before_digest hle)
-          · simpa [state1, state1Circuit] using
+          · simpa [state1, state1Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state0, paddedBlock padded 0⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree (by
@@ -558,7 +606,7 @@ theorem computableWitness : ∀ n input,
                         (le_trans h_state3_before_state4
                           (le_trans h_state4_before_state5 h_state5_before_digest))))
                     hle))
-          · simpa [state2, state2Circuit] using
+          · simpa [state2, state2Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state1, paddedBlock padded 1⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree (by
@@ -567,7 +615,7 @@ theorem computableWitness : ∀ n input,
                       (le_trans h_state3_before_state4
                         (le_trans h_state4_before_state5 h_state5_before_digest)))
                     hle))
-          · simpa [state3, state3Circuit] using
+          · simpa [state3, state3Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state2, paddedBlock padded 2⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree (by
@@ -575,14 +623,14 @@ theorem computableWitness : ∀ n input,
                     (le_trans h_state3_end_before_state4
                       (le_trans h_state4_before_state5 h_state5_before_digest))
                     hle))
-          · simpa [state4, state4Circuit] using
+          · simpa [state4, state4Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state3, paddedBlock padded 3⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree (by
                   exact le_trans
                     (le_trans h_state4_end_before_state5 h_state5_before_digest)
                     hle))
-          · simpa [state5, state5Circuit] using
+          · simpa [state5, state5Circuit, subcircuit_output_eq] using
               Solution.SHA256.CompressBlock.eval_circuit_output_of_agreesBelow
                 ⟨state4, paddedBlock padded 4⟩
                 (ProverEnvironment.agreesBelow_of_le h_agree
@@ -593,7 +641,7 @@ theorem computableWitness : ∀ n input,
   unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F circomPrime) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
       n ≤ off →
@@ -630,6 +678,7 @@ end
 
 section
 open Challenge.CostR1CS
+open Challenge.WitgenIR
 open Solution.SHA256.Cost
 
 -- `maxRecDepth` controls elaboration stack depth only (not the trusted base and
@@ -640,6 +689,7 @@ set_option maxRecDepth 8000
 -- certificates (see `Cost.lean`): otherwise the unifier evaluates `r1csProducts`
 -- on the asserted expressions and loops on neutral subterms.
 attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperationsIsR1CS
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
 
 /-! ### Structural cost of the top-level circuit
 
@@ -665,6 +715,21 @@ theorem mainCost :
     CostIs.pure _
       : CostIs (main input) ⟨allocations, constraints⟩)
 
+/-- Every witness of `main` — its own two padding vectors and those of every
+subcircuit — is generated through the witness IR. -/
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main :=
+  fun input =>
+  UsesIRCirc.bind (UsesIRCirc.witnessVector paddedBitsLen _) fun _ =>
+  UsesIRCirc.bind (UsesIRCirc.witnessVector inputBufferLen _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_checkPad _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_compressBlock _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_compressBlock _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_compressBlock _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_compressBlock _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_compressBlock _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub_selectDigest _) fun _ =>
+  UsesIRCirc.pure _
+
 /-- Structural single-row R1CS certificate for the circuit *family* `main`,
 for every affine symbolic input. Each assert is an affine combination (or
 `A·B`/`A·B−C` of affine forms), threaded through the affine message + length
@@ -677,11 +742,12 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
     refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector inputBufferLen _) fun nflags => ?_
     have hpadded : AffineW
         ((Circuit.witnessVector paddedBitsLen
-          (paddedBitsWitness input)).output npad) :=
+          (paddedBitsIR input)).output npad) :=
       affineW_witnessVector_output _ _ _
     have hflags : AffineW
-        ((Circuit.witnessVector inputBufferLen
-          (lenFlagsWitness input)).output nflags) :=
+        ((Circuit.witnessVector (F := F circomPrime) inputBufferLen
+          (.range inputBufferLen fun i =>
+            .ite (i =? input.messageLen.val) 1 0)).output nflags) :=
       affineW_witnessVector_output _ _ _
     refine IsR1CSCirc.bind
       (Cost.r1cs_sub_checkPad _ (Cost.affine_input_messageLen input hinput)
@@ -727,5 +793,17 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
     exact Cost.affineW_subOut_selectDigest _ _ i hi8)
 
 end
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.SHA256

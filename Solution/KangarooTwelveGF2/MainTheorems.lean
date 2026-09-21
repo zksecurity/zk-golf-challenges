@@ -8,8 +8,9 @@ open Challenge.F2Bits
 theorem eval_input_state {input : Var Input (F p2)}
     {env env' : ProverEnvironment (F p2)} (h : eval env input = eval env' input) :
     eval env input.state = eval env' input.state := by
-  rw [CircuitType.eval_var_fields_prover, CircuitType.eval_var_fields_prover]
+  obtain ⟨s⟩ := input
   have hstate := congrArg (fun x : Input (F p2) => x.state) h
-  simpa [circuit_norm] using hstate
+  simp only [circuit_norm, explicit_provable_type] at hstate ⊢
+  exact hstate
 
 end Solution.KangarooTwelveGF2

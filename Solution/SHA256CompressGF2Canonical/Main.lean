@@ -1,5 +1,6 @@
 import Solution.SHA256CompressGF2Canonical.Cost
 import Solution.SHA256CompressGF2Canonical.MainTheorems
+import Challenge.Utils.WitgenIR
 
 /-!
 # Canonical (C = identity) reference solution for `gf2-sha256-compress-canonical`
@@ -39,9 +40,13 @@ instance elaborated : ElaboratedCircuit (F p2) Input Output main := by
 
 theorem soundness : GeneralFormalCircuit.Soundness (F p2) main Assumptions Spec := by
   circuit_proof_start [main, Spec, Sched16Canon.circuit, Sched16Canon.Assumptions, Sched16Canon.Spec,
-    Rounds16Canon.circuit, Rounds16Canon.Assumptions, Rounds16Canon.Spec, Add32Canon.circuit, Add32.Assumptions, Add32.Spec]
+    Rounds16Canon.circuit, Rounds16Canon.Assumptions, Rounds16Canon.Spec]
   obtain ⟨hhIn, hmIn⟩ := h_input
   obtain ⟨hsc1, hsc2, hsc3, hrd1, hrd2, hrd3, hrd4, hadd⟩ := h_holds
+  -- `Add32Canon.circuit` is unfolded only after the `mapFinRange` loop has been
+  -- peeled: unfolding it earlier rewrites inside the loop body and stops the
+  -- peeling lemma from matching `feedConstantLength`
+  simp only [circuit_norm, Add32Canon.circuit, Add32.Assumptions, Add32.Spec] at hadd
   set block := toWords 32 16 input_m with hblock
   set hIn8 := toWords 32 8 input_h with hhIn8
   have hw1 : PureSchedule.extend16 block = PureSchedule.window block 1 := by
@@ -70,7 +75,8 @@ theorem soundness : GeneralFormalCircuit.Soundness (F p2) main Assumptions Spec 
       hwin 0, hwin 1, hwin 2, hwin 3, PureSchedule.window_zero]
   have hS4 := hrd4.trans hS4'.symm
   rw [Specs.SHA256.compressBlock, ← hS4]
-  refine Vector.ext fun k hk => ?_
+  -- the second component is the (vacuous) requirements obligation, discharged last
+  refine ⟨Vector.ext fun k hk => ?_, ?_⟩
   rw [Vector.getElem_mapFinRange, hhIn8]
   simp only [toWords_getElem]
   interval_cases k
@@ -130,6 +136,8 @@ theorem soundness : GeneralFormalCircuit.Soundness (F p2) main Assumptions Spec 
     rw [hk, toNat_eval_w256 env input_var_h 7 (by norm_num),
       toNat_eval_w256 env _ 7 (by norm_num), hhIn]
     simp only [Fin.getElem_fin, toWords_getElem, show ∀ a b : ℕ, _root_.add32 a b = (a + b) % 2 ^ 32 from fun _ _ => rfl]
+  · intro i
+    exact Or.inl rfl
 
 theorem completeness : GeneralFormalCircuit.Completeness (F p2) main ProverAssumptions ProverSpec := by
   circuit_proof_start
@@ -193,6 +201,27 @@ theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main :=
       Circuit.mapFinRange.output_eq, Vector.getElem_mapFinRange]
     exact out256_add32canon_affine hh (Rounds16Canon.affineW_subOut 48 _ _) _ _ _ _ _ _ _ _ i hi256)
 
+section WitgenIR
+
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the per-gadget certificates
+-- (see `Cost.lean`).
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := fun _ =>
+  UsesIRCirc.bind (Sched16Canon.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (Sched16Canon.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (Sched16Canon.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (Rounds16Canon.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Rounds16Canon.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Rounds16Canon.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Rounds16Canon.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (UsesIRCirc.mapFinRange fun _ n => Add32Canon.usesIR_sub _ n) fun _ =>
+  UsesIRCirc.pure _
+
+end WitgenIR
+
 section ComputableWitness
 
 open Challenge.Utils.ComputableWitnessLemmas
@@ -208,7 +237,7 @@ theorem computableWitness : ∀ n input,
     Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct : FormalCircuitBase.Operations.StructuralComputableWitnesses
       input env env' n ((main input).operations n) := by
     unfold main
@@ -279,7 +308,7 @@ theorem computableWitness : ∀ n input,
   unfold FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F p2) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F p2) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F p2))) (off : ℕ),
       n ≤ off →
@@ -312,5 +341,17 @@ theorem computableWitness : ∀ n input,
   exact himplies ((main input).operations n).toFlat n (le_refl n)
 
 end ComputableWitness
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.SHA256CompressGF2Canonical

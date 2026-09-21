@@ -33,12 +33,41 @@ namespace ToBytes
 /-- Little-endian byte `i` of a natural number. -/
 def byteOfNat (v i : ℕ) : ℕ := v / 2 ^ (8 * i) % 256
 
+/-! ## The byte witness
+
+A byte is an 8-bit window of the element's value, and the digit layer reads a window as
+a pure expression: no `let`-steps, so the site stays an ordinary `witnessVector` over a
+literal vector. `IREmu.emuDigits` costs nothing either, since the element's limbs are
+disjoint 64-bit windows of its value. -/
+
+/-- The 32 little-endian bytes of an emulated element, as literal expressions. -/
+def bytesGen (x : Var Emu (F circomPrime)) : Witgen.VExpr (F circomPrime) coordBytes :=
+  .lit (Vector.ofFn fun i : Fin coordBytes =>
+    WitgenBigNat.limbF (IREmu.emuDigits x) (8 * i.val) 8)
+
+/-- Bridge for `bytesGen`: cell `i` is byte `i` of the value the element denotes. -/
+theorem getElem_eval_bytesGen (x : Var Emu (F circomPrime))
+    (env : ProverEnvironment (F circomPrime)) (i : ℕ) (hi : i < coordBytes) :
+    ((bytesGen x).eval { env := env })[i]
+      = ((IRLimbs.bigVal limbBits x env / 2 ^ (8 * i) % 2 ^ 8 : ℕ) : F circomPrime) := by
+  have h : WitgenBigNat.EvalsV (#[] : Array (Witgen.Step (F circomPrime))) (bytesGen x)
+      (fun env => Vector.ofFn fun j : Fin coordBytes =>
+        ((IRLimbs.bigVal limbBits x env / 2 ^ (8 * j.val) % 2 ^ 8 : ℕ) : F circomPrime)) :=
+    WitgenBigNat.EvalsV.lit fun j hj => by
+      simpa only [Vector.getElem_ofFn] using
+        (WitgenBigNat.evalsF_limbF (IREmu.evalsBig_emuDigits x) (8 * j) 8).congr fun env => by
+          rw [IREmu.lval_ofNat_emu (IREmu.bigVal_lt_span x env)]
+  have h2 : Witgen.VExpr.eval { env := env } (bytesGen x)
+      = Vector.ofFn fun j : Fin coordBytes =>
+        ((IRLimbs.bigVal limbBits x env / 2 ^ (8 * j.val) % 2 ^ 8 : ℕ) : F circomPrime) :=
+    h.eval env
+  rw [h2, Vector.getElem_ofFn]
+
+/-- Witness the 32 little-endian bytes and pin them with the per-limb recomposition. -/
 def main (x : Var Emu (F circomPrime)) :
     Circuit (F circomPrime) (Var (fields coordBytes) (F circomPrime)) := do
   -- witness the 32 little-endian bytes of the value
-  let bytes ← ProvableType.witness (α := fields coordBytes) fun env =>
-    Vector.ofFn fun i : Fin coordBytes =>
-      ((byteOfNat (evalEmu env x) i.val : ℕ) : F circomPrime)
+  let bytes ← Circuit.witnessVector coordBytes (bytesGen x)
 
   -- each byte is 8 bits
   Circuit.forEach bytes (fun b => Gadgets.ToBits.rangeCheck 8 (by decide) b)
@@ -79,7 +108,6 @@ theorem soundness :
   apply soundness_core env i₀ input h_bytes
   intro k
   have h := h_rows k
-  simp only [Vector.getElem_ofFn] at h
   rw [eval_row_iff] at h
   rw [← h_input, Vector.getElem_map]
   exact h
@@ -98,8 +126,12 @@ theorem completeness :
       env.get (i₀ + i.val)
         = ((byteOfNat (BigInt.value limbBits input) i.val : ℕ) : F circomPrime) := by
     intro i
-    rw [h_wit i]
-    simp only [Vector.getElem_ofFn, hv]
+    have hbv : IRLimbs.bigVal limbBits input_var env = evalEmu env input_var :=
+      IREmu.bigVal_eq_evalEmu _ _ (by rw [h_input]; exact h_assumptions)
+    have hget := h_wit i
+    rw [getElem_eval_bytesGen _ env i.val i.isLt, hbv, hv] at hget
+    rw [hget, byteOfNat]
+    norm_num
   -- a byte value is < 2^8
   have hbyte_lt : ∀ v j : ℕ, byteOfNat v j < 2 ^ 8 :=
     fun v j => Nat.mod_lt _ (by norm_num)
@@ -109,7 +141,6 @@ theorem completeness :
       (lt_trans (by norm_num) two_pow_64_lt_circomPrime))]
     exact hbyte_lt _ _
   · -- recomposition rows
-    simp only [Vector.getElem_ofFn]
     rw [eval_row_iff]
     have hx : Expression.eval env.toEnvironment (input_var[k.val]'k.isLt)
         = input[k.val]'k.isLt := by
@@ -136,8 +167,8 @@ def circuit : FormalCircuit (F circomPrime) Emu (fields coordBytes) where
 
 open Challenge.Utils.ComputableWitnessLemmas in
 /-- The Clean library `toBits n hn` circuit has computable witnesses: its sole
-witness `witnessVector n (fun env => fieldToBits n (x.eval env))` reads only the
-gadget input `x`; the boolean and recomposition constraints are assertions. -/
+witness `Circuit.witnessVector n (.range n fun i => ((x.val >>> i) % 2).toField)`
+reads only the gadget input `x`; the boolean and recomposition constraints are assertions. -/
 private theorem toBits_computableWitnesses (n : ℕ) (hn : 2 ^ n < circomPrime) :
     (Gadgets.ToBits.toBits (p := circomPrime) n hn).ComputableWitnesses := by
   intro offset input env env'
@@ -157,7 +188,7 @@ private theorem toBits_computableWitnesses (n : ℕ) (hn : 2 ^ n < circomPrime) 
   refine ⟨?_, ?_, ?_⟩
   · intro _ h_input
     simp only [circuit_norm] at h_input
-    rw [h_input]
+    simp only [circuit_norm, Witgen.VExpr.range_def, Witgen.VExpr.eval, h_input]
   · intro i
     rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
     simp only [circuit_norm, FlatOperation.forAll,
@@ -200,8 +231,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
   unfold main
   simp only [
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
     Circuit.bind_structuralComputableWitnesses_iff,
-    Circuit.provableWitness_structuralComputableWitnesses_iff,
     Circuit.forEach_structuralComputableWitnesses_iff,
     Circuit.assertZero_structuralComputableWitnesses_iff,
     Circuit.pure_structuralComputableWitnesses_iff,
@@ -210,10 +241,10 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   refine ⟨?_, ?_⟩
   · -- the 32 witnessed bytes read only the input value
     intro _ h_input
-    have hev : evalEmu env input = evalEmu env' input := evalEmu_eq_of_eval_eq h_input
-    apply Vector.ext
-    intro i hi
-    simp only [Vector.getElem_ofFn, hev]
+    -- each witnessed cell is a window of the input's value
+    refine Vector.ext fun i hi => ?_
+    rw [getElem_eval_bytesGen _ _ i hi, getElem_eval_bytesGen _ _ i hi,
+      IREmu.bigVal_stable _ h_input]
   · -- forEach rangeCheck: each byte input is a previously-allocated witness cell
     intro i
     refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
@@ -224,8 +255,10 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
       simp only [circuit_norm, Gadgets.ToBits.rangeCheck, coordBytes] at hle ⊢
       omega
     have hmem := eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk
-    rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover]
-    exact hmem _ (Vector.getElem_mem i.isLt)
+    have hx := hmem _ (Vector.getElem_mem i.isLt)
+    simp only [circuit_norm] at hx
+    simp only [circuit_norm]
+    exact hx
 
 theorem computableWitness : ∀ n input,
     ProverEnvironment.OnlyAccessedBelow n

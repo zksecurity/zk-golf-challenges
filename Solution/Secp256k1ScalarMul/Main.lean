@@ -1,13 +1,14 @@
 import Solution.Secp256k1ScalarMul.ScalarMul
 import Solution.Secp256k1ScalarMul.MainTheorems
 import Solution.Secp256k1ScalarMul.Cost
+import Challenge.Utils.WitgenIR
 import Challenge.Instances.Secp256k1ScalarMul.Interface
 
 /-!
 # Top-level circuit — comparator entry point
 
 Adapts the instance Interface (byte-encoded points, SEC1-style big-endian) to
-the `ScalarMul` gadget (4×64-bit little-endian limbs) and exports the four
+the `ScalarMul` gadget (4×64-bit little-endian limbs) and exports the
 comparator obligations.
 
 The byte→limb packing is a pure affine reindexing (no constraints): the
@@ -104,6 +105,8 @@ open Solution.Secp256k1ScalarMul.Cost
 -- certificates (see `Cost.lean`): otherwise the unifier evaluates
 -- `r1csProducts` on the asserted expressions and loops on neutral subterms.
 attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperationsIsR1CS
+attribute [local irreducible] Challenge.WitgenIR.operationsUseIR
+  Challenge.WitgenIR.flatOperationsUseIR Challenge.WitgenIR.IsIR
 
 /-- Each packed limb is an affine fold `Σ byte·2^(8t)` of the (affine) input
 bytes, hence affine. -/
@@ -154,6 +157,15 @@ private theorem affineOutput_main (input : Var Interface.Input (F Interface.circ
     { bits := input.bits, px := packCoord input.px, py := packCoord input.py } n
   exact affineProvable_interfaceOutput h.1 h.2.1 h.2.2
 
+/-- Every witness in the circuit — the emulated-arithmetic limb/quotient
+witnesses, the `Mux` selections, the byte decompositions, the carry chains, the
+product matrices, and the Fermat inverse chain inside `DivOrZero` — is generated
+by the witness IR, never by a Lean closure. One `ScalarMul` subcircuit;
+`packCoord` is a pure reindexing that contributes no operations. -/
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := fun _ =>
+  Challenge.WitgenIR.UsesIRCirc.bind (usesIR_sub_scalarMul _) fun _ =>
+  Challenge.WitgenIR.UsesIRCirc.pure _
+
 theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   isR1CS_of_IsR1CSCirc
     (fun input hinput =>
@@ -191,7 +203,7 @@ theorem computableWitness : ∀ n input,
   Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct :
       Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
         input env env' n ((main input).operations n) := by
@@ -207,14 +219,9 @@ theorem computableWitness : ∀ n input,
     intro e1 e2 h_input_eq
     simp only [circuit_norm, ScalarMul.Inputs.mk.injEq]
     refine ⟨?_, ?_, ?_⟩
-    · simpa [circuit_norm] using
-        congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.bits) h_input_eq
-    · exact eval_packCoord_congr input.px
-        (by simpa [circuit_norm] using
-          congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.px) h_input_eq)
-    · exact eval_packCoord_congr input.py
-        (by simpa [circuit_norm] using
-          congrArg (fun x : Interface.Input (F Interface.circomPrime) => x.py) h_input_eq)
+    · exact (eval_input_parts_eq h_input_eq).1
+    · exact eval_packCoord_congr input.px (eval_input_parts_eq h_input_eq).2.1
+    · exact eval_packCoord_congr input.py (eval_input_parts_eq h_input_eq).2.2
   -- reduce the flattened structural condition to the target `forAllFlat` condition
   have hflat :=
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
@@ -222,7 +229,7 @@ theorem computableWitness : ∀ n input,
   unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F Interface.circomPrime) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F Interface.circomPrime) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F Interface.circomPrime))) (off : ℕ),
       n ≤ off →
@@ -260,6 +267,18 @@ end ComputableWitness
 -- No `formalCircuit` bundle here: unifying the theorems against the
 -- `GeneralFormalCircuit` field types forces a `whnf` of the 256-step fold
 -- term and times out, and the comparator only requires `main`, `elaborated`,
--- and the four theorems above.
+-- and the theorems above.
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.Secp256k1ScalarMul

@@ -33,13 +33,18 @@ deriving ProvableStruct
 
 def main (input : Var Inputs (F circomPrime)) :
     Circuit (F circomPrime) (Var Emu (F circomPrime)) := do
-  let { a, b } := input
+  let a := input.a
+  let b := input.b
 
-  -- witness r = (a + b) % P256 and the quotient bit q = (a + b) / P256
-  let r ← ProvableType.witness (α := Emu) fun env =>
-    emuOfNat ((evalEmu env a + evalEmu env b) % P256)
-  let q ← ProvableType.witness (α := field) fun env =>
-    (((evalEmu env a + evalEmu env b) / P256 : ℕ) : F circomPrime)
+  -- witness r = (a + b) % P256 and the quotient bit q = (a + b) / P256. Both are
+  -- closed forms over the same ℕ expression `a.value + b.value`, built from the
+  -- shared `IREmu` toolkit: the Horner limb value of each operand, then `%`/`/` in
+  -- digit layer: one `workLen`-digit register holds `a + b`, one conditional
+  -- subtraction of the modulus reduces it, and the borrow of that subtraction *is* the
+  -- quotient bit, so `q` costs nothing beyond reading it back.
+  let r ← witnessVectorProgram numLimbs (IREmu.addRProg a b)
+  let q ← witnessProgram (F := F circomPrime) (value := field) (var := Expression)
+    (IREmu.addQProg a b)
 
   -- q is boolean
   assertZero (q * (q - 1))
@@ -92,9 +97,25 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     rw [evalEmu, BigInt.value, ← h_input.1]
   have hevb : evalEmu env input_var_b = BigInt.value limbBits input_b := by
     rw [evalEmu, BigInt.value, ← h_input.2]
-  rw [heva, hevb] at h_env
+  -- read the witnessed cells back through the two program bridges
+  have hna : BigInt.Normalized limbBits
+      (input_var_a.map (Expression.eval env.toEnvironment)) := by
+    rw [h_input.1]; exact h_assumptions.1.1
+  have hnb : BigInt.Normalized limbBits
+      (input_var_b.map (Expression.eval env.toEnvironment)) := by
+    rw [h_input.2]; exact h_assumptions.2.1
+  have hva : evalEmu env input_var_a < P256 := by rw [heva]; exact h_assumptions.1.2
+  have hvb : evalEmu env input_var_b < P256 := by rw [hevb]; exact h_assumptions.2.2
+  have hwit_r : ∀ i : Fin numLimbs, env.toEnvironment.get (i₀ + i.val)
+      = (emuOfNat ((BigInt.value limbBits input_a + BigInt.value limbBits input_b) % P256))[i.val] := by
+    intro i
+    have hget := h_env.1 i
+    rw [IREmu.eval_addRProg_of _ _ env hna hnb hva hvb, heva, hevb] at hget
+    exact hget
+  have hwit_q := h_env.2
+  rw [IREmu.eval_addQProg_of _ _ env hna hnb hva hvb, heva, hevb] at hwit_q
   exact completeness_core i₀ env.toEnvironment input_var_a input_var_b input_a input_b
-    h_input.1 h_input.2 h_assumptions.1 h_assumptions.2 h_env.1 h_env.2
+    h_input.1 h_input.2 h_assumptions.1 h_assumptions.2 hwit_r hwit_q
 
 /-- The `AddMod` formal circuit: `c = a + b mod P256`. -/
 def circuit : FormalCircuit (F circomPrime) Inputs Emu where
@@ -104,6 +125,35 @@ def circuit : FormalCircuit (F circomPrime) Inputs Emu where
   Spec := Spec
   soundness := soundness
   completeness := completeness
+
+/-- Per-field projection of an `eval`-agreement hypothesis on the `Inputs` struct.
+The `Var Inputs` `match` no longer iota-reduces on a struct *variable*, so the
+destructuring has to happen here, once. -/
+lemma eval_inputs_parts {input : Var Inputs (F circomPrime)}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h : eval env input = eval env' input) :
+    eval env input.a = eval env' input.a ∧ eval env input.b = eval env' input.b := by
+  obtain ⟨a, b⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h ⊢
+  exact h
+
+/-- Membership form of `eval_inputs_parts`. -/
+lemma eval_inputs_mem {input : Var Inputs (F circomPrime)}
+    {env env' : ProverEnvironment (F circomPrime)}
+    (h : eval env input = eval env' input) :
+    (∀ x ∈ input.a, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x) ∧
+      (∀ x ∈ input.b, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x) := by
+  obtain ⟨a, b⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+  refine ⟨fun x hx => ?_, fun x hx => ?_⟩
+  · simp only [Vector.mem_iff_getElem] at hx
+    obtain ⟨i, hi, rfl⟩ := hx
+    have := congrArg (fun v : Vector (F circomPrime) numLimbs => v[i]'hi) h.1
+    simpa only [Vector.getElem_map] using this
+  · simp only [Vector.mem_iff_getElem] at hx
+    obtain ⟨i, hi, rfl⟩ := hx
+    have := congrArg (fun v : Vector (F circomPrime) numLimbs => v[i]'hi) h.2
+    simpa only [Vector.getElem_map] using this
 
 theorem evalEmu_stable (x : Var Emu (F circomPrime))
     {env env' : ProverEnvironment (F circomPrime)}
@@ -123,31 +173,30 @@ theorem evalEmu_stable (x : Var Emu (F circomPrime))
   simp [evalEmu, hmap]
 
 theorem emuWitnessOutput_stable
-    (compute : ProverEnvironment (F circomPrime) → Emu (F circomPrime))
+    (prog : Witgen.M (F circomPrime) (Witgen.VExpr (F circomPrime) numLimbs))
     {offset k : ℕ} {env env' : ProverEnvironment (F circomPrime)}
     (h_agree : env.AgreesBelow k env') (hk : offset + numLimbs ≤ k) :
-    eval env ((ProvableType.witness (α := Emu) compute).output offset) =
-      eval env' ((ProvableType.witness (α := Emu) compute).output offset) := by
+    eval env ((witnessVectorProgram numLimbs prog).output offset) =
+      eval env' ((witnessVectorProgram numLimbs prog).output offset) := by
   apply Vector.ext
   intro i hi
   rw [← ProvableType.getElem_eval_fields_prover (env := env)
-      ((ProvableType.witness (α := Emu) compute).output offset) i hi,
+      ((witnessVectorProgram numLimbs prog).output offset) i hi,
     ← ProvableType.getElem_eval_fields_prover (env := env')
-      ((ProvableType.witness (α := Emu) compute).output offset) i hi]
-  simp only [Circuit.output, ProvableType.witness, ProvableType.varFromOffset_fields,
-    Vector.getElem_mapRange, Expression.eval]
+      ((witnessVectorProgram numLimbs prog).output offset) i hi]
+  simp only [circuit_norm]
   exact h_agree (offset + i) (by omega)
 
-theorem fieldWitnessOutput_stable
-    (compute : ProverEnvironment (F circomPrime) → F circomPrime)
+theorem fieldWitnessOutput_stable (prog : Witgen.M (F circomPrime) (Witgen.FExpr (F circomPrime)))
     {offset k : ℕ} {env env' : ProverEnvironment (F circomPrime)}
     (h_agree : env.AgreesBelow k env') (hk : offset < k) :
     Expression.eval env.toEnvironment
-        ((ProvableType.witness (α := field) compute).output offset) =
-      Expression.eval env'.toEnvironment
-        ((ProvableType.witness (α := field) compute).output offset) := by
-  simp [Circuit.output, ProvableType.witness, ProvableType.varFromOffset,
-    explicit_provable_type]
+        ((witnessProgram (F := F circomPrime) (value := field) (var := Expression) prog).output
+          offset)
+      = Expression.eval env'.toEnvironment
+        ((witnessProgram (F := F circomPrime) (value := field) (var := Expression) prog).output
+          offset) := by
+  simp only [circuit_norm]
   exact h_agree offset hk
 
 theorem assertion_structuralComputableWitnesses_of_condition {Parent Input : TypeMap}
@@ -175,14 +224,18 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
   apply
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
   unfold main
+  -- the two inlined generators, named locally so the offset bookkeeping below can
+  -- refer to them without restating the terms
+  let rGen : Witgen.M (F circomPrime) (Witgen.VExpr (F circomPrime) numLimbs) :=
+    IREmu.addRProg input.a input.b
+  let qGen : Witgen.M (F circomPrime) (Witgen.FExpr (F circomPrime)) :=
+    IREmu.addQProg input.a input.b
   let rCircuit : Circuit (F circomPrime) (Var Emu (F circomPrime)) :=
-    ProvableType.witness (α := Emu) fun env =>
-      emuOfNat ((evalEmu env input.a + evalEmu env input.b) % P256)
+    witnessVectorProgram numLimbs rGen
   let r := rCircuit.output offset
   let qOffset := offset + rCircuit.localLength offset
   let qCircuit : Circuit (F circomPrime) (Var field (F circomPrime)) :=
-    ProvableType.witness (α := field) fun env =>
-      (((evalEmu env input.a + evalEmu env input.b) / P256 : ℕ) : F circomPrime)
+    witnessProgram (F := F circomPrime) (value := field) (var := Expression) qGen
   let q := qCircuit.output qOffset
   let boolOffset := qOffset + qCircuit.localLength qOffset
   let normCircuit : Circuit (F circomPrime) Unit :=
@@ -205,25 +258,21 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
     simp [circuit_norm]
   simp only [
     Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.provableWitness_structuralComputableWitnesses_iff,
+    IRLimbs.witnessVectorProgram_eq_witnessIR,
+    IRLimbs.witnessProgramF_eq_witnessIR,
+    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessIR_structuralComputableWitnesses_iff,
     Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
   and_intros
+  · -- the witnessed limbs come out of a register built from the two operands' limb
+    -- values, so they read the operands only through those
+    intro _ h_input
+    exact IREmu.eval_toIR_addRProg_congr _ _
+      (IREmu.bigVal_stable _ (eval_inputs_parts h_input).1)
+      (IREmu.bigVal_stable _ (eval_inputs_parts h_input).2)
   · intro _ h_input
-    have ha : evalEmu env input.a = evalEmu env' input.a := by
-      apply evalEmu_stable
-      simpa [circuit_norm] using congrArg (fun x : Inputs (F circomPrime) => x.a) h_input
-    have hb : evalEmu env input.b = evalEmu env' input.b := by
-      apply evalEmu_stable
-      simpa [circuit_norm] using congrArg (fun x : Inputs (F circomPrime) => x.b) h_input
-    simp [ha, hb]
-  · intro _ h_input
-    have ha : evalEmu env input.a = evalEmu env' input.a := by
-      apply evalEmu_stable
-      simpa [circuit_norm] using congrArg (fun x : Inputs (F circomPrime) => x.a) h_input
-    have hb : evalEmu env input.b = evalEmu env' input.b := by
-      apply evalEmu_stable
-      simpa [circuit_norm] using congrArg (fun x : Inputs (F circomPrime) => x.b) h_input
-    simp [ha, hb]
+    exact IREmu.eval_toIR_addQProg_congr _ _
+      (IREmu.bigVal_stable _ (eval_inputs_parts h_input).1)
+      (IREmu.bigVal_stable _ (eval_inputs_parts h_input).2)
   · trivial
   · exact Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.subcircuit_flatStructuralComputableWitnesses_of_condition
       (Normalize.circuit secpParams) input r normOffset
@@ -236,10 +285,8 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
             rw [h_r_len] at hle'
             omega
           exact hk
-        have hr := emuWitnessOutput_stable
-          (offset := offset) (k := k)
-          (fun env => emuOfNat ((evalEmu env input.a + evalEmu env input.b) % P256))
-          h_agree hk
+        have hr := emuWitnessOutput_stable (offset := offset) (k := k)
+          rGen h_agree hk
         simpa [r, rCircuit] using hr)
       (Normalize.computableWitnesses secpParams) env env'
   · trivial
@@ -255,10 +302,8 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
               rw [h_r_len]
               omega
             omega
-          have hr := emuWitnessOutput_stable
-            (offset := offset) (k := k)
-            (fun env => emuOfNat ((evalEmu env input.a + evalEmu env input.b) % P256))
-            h_agree hk
+          have hr := emuWitnessOutput_stable (offset := offset) (k := k)
+            rGen h_agree hk
           exact eval_mem_of_map_eval_eq (by
             simpa [r, rCircuit] using emu_map_eval_eq_of_eval_eq hr)
         · intro a ha
@@ -275,13 +320,7 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
       (by
         intro k env env' hle h_agree h_input
         simp [circuit_norm]
-        have h_input_parts :
-            (∀ a ∈ input.a, Expression.eval env.toEnvironment a =
-                Expression.eval env'.toEnvironment a) ∧
-              ∀ a ∈ input.b, Expression.eval env.toEnvironment a =
-                Expression.eval env'.toEnvironment a := by
-          simpa [circuit_norm, CircuitType.eval_expression_prover_to_verifier,
-            CircuitType.eval_expression, ProvableType.eval, explicit_provable_type] using h_input
+        have h_input_parts := eval_inputs_mem h_input
         constructor
         · have hlhs :
             lhs.map (Expression.eval env.toEnvironment) =
@@ -318,9 +357,7 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
               have hq : Expression.eval env.toEnvironment q =
                   Expression.eval env'.toEnvironment q := by
                 exact fieldWitnessOutput_stable
-                  (offset := qOffset) (k := k)
-                  (fun env => (((evalEmu env input.a + evalEmu env input.b) / P256 : ℕ) :
-                    F circomPrime))
+                  (offset := qOffset) (k := k) qGen
                   h_agree (by
                     have hbase : qOffset + 1 ≤ normOffset := by
                       dsimp [normOffset, boolOffset]
@@ -335,8 +372,7 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
               have hr : Expression.eval env.toEnvironment r[i] =
                   Expression.eval env'.toEnvironment r[i] := by
                 have hr_vec := emuWitnessOutput_stable
-                  (offset := offset) (k := k)
-                  (fun env => emuOfNat ((evalEmu env input.a + evalEmu env input.b) % P256))
+                  (offset := offset) (k := k) rGen
                   h_agree (by
                     have hbase : offset + numLimbs ≤ normOffset := by
                       dsimp [normOffset, boolOffset, qOffset]
@@ -379,8 +415,7 @@ lemma eval_output_of_agreesBelow (input : Var Inputs (F circomPrime)) {offset k 
     (h_agree : env.AgreesBelow k env') (hk : offset + numLimbs ≤ k) :
     eval env ((main input).output offset) = eval env' ((main input).output offset) := by
   have hout : (main input).output offset
-      = (ProvableType.witness (α := Emu) fun env =>
-          emuOfNat ((evalEmu env input.a + evalEmu env input.b) % P256)).output offset := rfl
+      = (witnessVectorProgram numLimbs (IREmu.addRProg input.a input.b)).output offset := rfl
   rw [hout]
   exact emuWitnessOutput_stable _ h_agree hk
 

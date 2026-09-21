@@ -193,6 +193,20 @@ structure Inputs (m : ℕ) (F : Type) where
   modulus : BigInt m F
 deriving ProvableStruct
 
+omit [NeZero m] in
+/-- Per-field projection of an `eval`-agreement hypothesis on the `Inputs` struct.
+The `Var Inputs` `match` no longer iota-reduces on a struct *variable*, so the
+destructuring has to happen here, once. -/
+lemma eval_inputs_parts {input : Var (Inputs m) (F p)} {env env' : ProverEnvironment (F p)}
+    (h : eval env input = eval env' input) :
+    Vector.map (Expression.eval env.toEnvironment) input.base
+        = Vector.map (Expression.eval env'.toEnvironment) input.base ∧
+      Vector.map (Expression.eval env.toEnvironment) input.modulus
+        = Vector.map (Expression.eval env'.toEnvironment) input.modulus := by
+  obtain ⟨base, modulus⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+  exact h
+
 /-- Number of `MulMod` subcircuit calls emitted for exponent `e`. We seed the
 accumulator with `base` (consuming the most-significant bit, always `1` for
 `e ≥ 1`) and loop over the remaining bits: one squaring per remaining bit, plus
@@ -292,10 +306,10 @@ lemma modExpLoop_subcircuitsConsistent (P : BigIntParams p m) [Fact (p > 2)]
 lemma modExpLoop_channelsLawful (P : BigIntParams p m) [Fact (p > 2)]
     (base n : Var (BigInt m) (F p)) :
     ∀ (bs : List Bool) (acc : Var (BigInt m) (F p)) (offset : ℕ),
-      ((modExpLoop P base n bs acc).operations offset).ChannelsLawful [] [] := by
+      ((modExpLoop P base n bs acc).operations offset).ChannelsLawful [] := by
   -- The single-`MulMod`-subcircuit step is channel-lawful (R1CS, no channels).
   have hsub : ∀ (x : Var (MulMod.Inputs m) (F p)) (off : ℕ),
-      (((subcircuit (MulMod.circuit P) x)).operations off).ChannelsLawful [] [] := by
+      (((subcircuit (MulMod.circuit P) x)).operations off).ChannelsLawful [] := by
     intro x off
     simp only [circuit_norm, MulMod.circuit, MulMod.elaborated]
   intro bs
@@ -309,17 +323,77 @@ lemma modExpLoop_channelsLawful (P : BigIntParams p m) [Fact (p > 2)]
     cases bit
     · show ((do
           let sq ← subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }
-          modExpLoop P base n rest sq).operations offset).ChannelsLawful [] []
+          modExpLoop P base n rest sq).operations offset).ChannelsLawful []
       rw [Circuit.bind_operations_eq]
       exact Operations.channelsLawful_append_of_channelsLawful
         (hsub { a := acc, b := acc, modulus := n } offset) (ih _ _)
     · show ((do
           let sq ← subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }
           let acc' ← subcircuit (MulMod.circuit P) { a := sq, b := base, modulus := n }
-          modExpLoop P base n rest acc').operations offset).ChannelsLawful [] []
+          modExpLoop P base n rest acc').operations offset).ChannelsLawful []
       rw [Circuit.bind_operations_eq, Circuit.bind_operations_eq]
       exact Operations.channelsLawful_append_of_channelsLawful (hsub { a := acc, b := acc, modulus := n } offset)
         (Operations.channelsLawful_append_of_channelsLawful (hsub _ _) (ih _ _))
+
+/-- Channel-freeness of an operation list: no shallow interactions and no
+subcircuit requirement channels. -/
+private def NoChannels (ops : Operations (F p)) : Prop :=
+  ops.shallowInteractions = [] ∧ ops.subcircuitChannelsWithRequirements = []
+
+omit [NeZero m] in
+private lemma noChannels_append {ops ops' : Operations (F p)}
+    (h : NoChannels ops) (h' : NoChannels ops') : NoChannels (ops ++ ops') := by
+  refine ⟨?_, ?_⟩
+  · rw [Operations.shallowInteractions_append, h.1, h'.1]; rfl
+  · rw [Operations.subcircuitChannelsWithRequirements_append, h.2, h'.2]; rfl
+
+omit [NeZero m] in
+/-- A channel-free operation list satisfies the `RequirementsChannelsLawful`
+obligation with empty channel lists. -/
+lemma requirementsChannelsLawful_of_noChannels {ops : Operations (F p)}
+    (h : NoChannels ops) : ops.RequirementsChannelsLawful [] [] := by
+  refine ⟨by rw [h.2]; exact List.Subset.refl _, ?_, ?_⟩
+  · intro c hc
+    rw [Operations.shallowChannels_eq_interactions_map, h.1] at hc
+    simp at hc
+  · intro env _
+    rw [Operations.inChannelsOrRequirements_iff_forall_mem]
+    intro i hi
+    rw [h.1] at hi
+    simp at hi
+
+/-- The unrolled loop is channel-free. -/
+lemma modExpLoop_noChannels (P : BigIntParams p m) [Fact (p > 2)]
+    (base n : Var (BigInt m) (F p)) :
+    ∀ (bs : List Bool) (acc : Var (BigInt m) (F p)) (offset : ℕ),
+      NoChannels ((modExpLoop P base n bs acc).operations offset) := by
+  have hsub : ∀ (x : Var (MulMod.Inputs m) (F p)) (off : ℕ),
+      NoChannels ((subcircuit (MulMod.circuit P) x).operations off) := by
+    intro x off
+    constructor
+    · simp only [circuit_norm]
+    · simp only [Operations.subcircuitChannelsWithRequirements, circuit_norm, MulMod.circuit]
+  intro bs
+  induction bs with
+  | nil =>
+    intro acc offset
+    simp only [modExpLoop, Circuit.pure_operations_eq]
+    exact ⟨rfl, rfl⟩
+  | cons bit rest ih =>
+    intro acc offset
+    cases bit
+    · show NoChannels ((do
+          let sq ← subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }
+          modExpLoop P base n rest sq).operations offset)
+      rw [Circuit.bind_operations_eq]
+      exact noChannels_append (hsub { a := acc, b := acc, modulus := n } offset) (ih _ _)
+    · show NoChannels ((do
+          let sq ← subcircuit (MulMod.circuit P) { a := acc, b := acc, modulus := n }
+          let acc' ← subcircuit (MulMod.circuit P) { a := sq, b := base, modulus := n }
+          modExpLoop P base n rest acc').operations offset)
+      rw [Circuit.bind_operations_eq, Circuit.bind_operations_eq]
+      exact noChannels_append (hsub { a := acc, b := acc, modulus := n } offset)
+        (noChannels_append (hsub _ _) (ih _ _))
 
 /-- Evaluate a big-integer variable vector under `env`. -/
 private abbrev ev (env : Environment (F p)) (x : Var (BigInt m) (F p)) : BigInt m (F p) :=
@@ -618,15 +692,24 @@ parametric in the compile-time exponent `e`. -/
 def circuit (P : RSAParams p m) [Fact (p > 2)] :
     FormalCircuit (F p) (Inputs m) (BigInt m) where
     main := main P
+    requirementsChannelsLawful := by
+      intro input offset
+      simp only [main]
+      cases h : eBits P.e with
+      | nil =>
+        simp only [Circuit.pure_operations_eq]
+        exact requirementsChannelsLawful_of_noChannels ⟨rfl, rfl⟩
+      | cons headBit tail =>
+        exact requirementsChannelsLawful_of_noChannels
+          (modExpLoop_noChannels P.bigIntParams _ _ tail _ offset)
     Assumptions := Assumptions P.e P.bigIntParams.B
     Spec := Spec P.e P.bigIntParams.B
     soundness := by
       circuit_proof_start
       obtain ⟨hbase_norm, hn_norm, hbase_lt, hn_gt1⟩ := h_assumptions
       -- rewrite assumptions in terms of evaluated inputs
-      rw [← h_input] at hbase_norm hn_norm hbase_lt hn_gt1 ⊢
-      simp only at hbase_norm hn_norm hbase_lt hn_gt1 ⊢
-      have hn_pos : 0 < (ev env input_var.modulus).value P.bigIntParams.B :=
+      simp only [← h_input] at hbase_norm hn_norm hbase_lt hn_gt1 ⊢
+      have hn_pos : 0 < (ev env input_var_modulus).value P.bigIntParams.B :=
         lt_trans Nat.zero_lt_one hn_gt1
       -- branch on the bit list of `e`: `[]` is `e = 0` (return `1`), cons seeds `base`.
       cases h : eBits P.e with
@@ -642,8 +725,8 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
           ext i hi
           simp only [Vector.getElem_map, Vector.getElem_ofFn]
           by_cases h0 : i = 0 <;> simp [h0, Expression.eval]
-        have hn_ne1 : (ev env input_var.modulus).value P.bigIntParams.B ≠ 1 := by
-          show BigInt.value P.bigIntParams.B (Vector.map (Expression.eval env) input_var.modulus) ≠ 1
+        have hn_ne1 : (ev env input_var_modulus).value P.bigIntParams.B ≠ 1 := by
+          show BigInt.value P.bigIntParams.B (Vector.map (Expression.eval env) input_var_modulus) ≠ 1
           omega
         refine ⟨⟨?_, ?_⟩, by trivial⟩
         · show (ev env (Vector.ofFn fun k : Fin m =>
@@ -651,7 +734,7 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
           rw [hone_eq]; exact oneVal_normalized P.bigIntParams.hB1
         · show (ev env (Vector.ofFn fun k : Fin m =>
             if (k : ℕ) = 0 then (1 : Expression (F p)) else 0)).value P.bigIntParams.B
-            = (ev env input_var.base).value P.bigIntParams.B ^ P.e % (ev env input_var.modulus).value P.bigIntParams.B
+            = (ev env input_var_base).value P.bigIntParams.B ^ P.e % (ev env input_var_modulus).value P.bigIntParams.B
           rw [hone_eq, value_oneVal, he0, pow_zero, Nat.one_mod_eq_one.mpr hn_ne1]
       | cons headBit tail =>
         -- `e ≥ 1`: seed the accumulator with `base` (consuming the leading `1` bit).
@@ -659,12 +742,12 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
         rw [h] at h_holds
         simp only at h_holds ⊢
         -- seed invariant: base.value = base.value ^ 1 % n.value
-        have hbase_val : (ev env input_var.base).value P.bigIntParams.B
-            = (ev env input_var.base).value P.bigIntParams.B ^ 1 % (ev env input_var.modulus).value P.bigIntParams.B := by
+        have hbase_val : (ev env input_var_base).value P.bigIntParams.B
+            = (ev env input_var_base).value P.bigIntParams.B ^ 1 % (ev env input_var_modulus).value P.bigIntParams.B := by
           rw [pow_one, Nat.mod_eq_of_lt hbase_lt]
         refine ⟨?_, modExpLoop_requirements P.bigIntParams env _ _ tail _ _⟩
         obtain ⟨hout_norm, _, hout_val⟩ :=
-          modExpLoop_soundness P.bigIntParams env input_var.base input_var.modulus
+          modExpLoop_soundness P.bigIntParams env input_var_base input_var_modulus
             hbase_norm hn_norm hbase_lt hn_pos tail _ i₀ 1
             hbase_norm hbase_lt hbase_val h_holds
         refine ⟨hout_norm, ?_⟩
@@ -678,9 +761,8 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
     completeness := by
       circuit_proof_start
       obtain ⟨hbase_norm, hn_norm, hbase_lt, hn_gt1⟩ := h_assumptions
-      rw [← h_input] at hbase_norm hn_norm hbase_lt hn_gt1
-      simp only at hbase_norm hn_norm hbase_lt hn_gt1
-      have hn_pos : 0 < (ev env.toEnvironment input_var.modulus).value P.bigIntParams.B :=
+      simp only [← h_input] at hbase_norm hn_norm hbase_lt hn_gt1
+      have hn_pos : 0 < (ev env.toEnvironment input_var_modulus).value P.bigIntParams.B :=
         lt_trans Nat.zero_lt_one hn_gt1
       -- branch on the bit list of `e`: `[]` is `e = 0` (no subcircuits), cons seeds `base`.
       cases h : eBits P.e with
@@ -692,11 +774,11 @@ def circuit (P : RSAParams p m) [Fact (p > 2)] :
         rw [h] at h_env
         simp only at h_env ⊢
         -- seed invariant: base.value = base.value ^ 1 % n.value
-        have hbase_val : (ev env.toEnvironment input_var.base).value P.bigIntParams.B
-            = (ev env.toEnvironment input_var.base).value P.bigIntParams.B ^ 1
-              % (ev env.toEnvironment input_var.modulus).value P.bigIntParams.B := by
+        have hbase_val : (ev env.toEnvironment input_var_base).value P.bigIntParams.B
+            = (ev env.toEnvironment input_var_base).value P.bigIntParams.B ^ 1
+              % (ev env.toEnvironment input_var_modulus).value P.bigIntParams.B := by
           rw [pow_one, Nat.mod_eq_of_lt hbase_lt]
-        exact (modExpLoop_completeness P.bigIntParams env input_var.base input_var.modulus
+        exact (modExpLoop_completeness P.bigIntParams env input_var_base input_var_modulus
           hbase_norm hn_norm hbase_lt hn_pos tail _ i₀ 1
           hbase_norm hbase_lt hbase_val h_env).1
 
@@ -762,7 +844,7 @@ lemma modExpLoop_structuralComputableWitnesses (P : BigIntParams p m) [Fact (p >
         have ha := hacc k e e' hk hag hin
         have hnn := hn e e' hin
         simp only [circuit_norm] at ha hnn ⊢
-        simp only [ha, hnn]
+        exact ⟨ha, ha, hnn⟩
       · refine ih _ _ env env' ?_
         intro k e e' hk hag _
         rw [hsubout _ offset]
@@ -774,7 +856,7 @@ lemma modExpLoop_structuralComputableWitnesses (P : BigIntParams p m) [Fact (p >
         have ha := hacc k e e' hk hag hin
         have hnn := hn e e' hin
         simp only [circuit_norm] at ha hnn ⊢
-        simp only [ha, hnn]
+        exact ⟨ha, ha, hnn⟩
       · intro k e e' hk hag hin
         have hbb := hbase e e' hin
         have hnn := hn e e' hin
@@ -783,7 +865,7 @@ lemma modExpLoop_structuralComputableWitnesses (P : BigIntParams p m) [Fact (p >
           rw [hsubout _ offset]
           exact hblock_agree offset k e e' (by simp only [mulModLen] at hk ⊢; omega) hag
         simp only [circuit_norm] at hbb hnn hsq ⊢
-        simp only [hsq, hbb, hnn]
+        exact ⟨hsq, hbb, hnn⟩
       · refine ih _ _ env env' ?_
         intro k e e' hk hag _
         rw [hsubout _ (offset + mulModLen (m := m) P.B P.W)]
@@ -863,8 +945,7 @@ lemma eval_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F
     (h_agree : env.AgreesBelow (offset + (circuit P).localLength input) env') :
     eval env ((main P input).output offset) = eval env' ((main P input).output offset) := by
   have hbin : eval env input.base = eval env' input.base := by
-    have hm := congrArg (fun s : Inputs m (F p) => s.base) h_input
-    simp only [circuit_norm] at hm ⊢; exact hm
+    simp only [circuit_norm]; exact (eval_inputs_parts h_input).1
   have hlen : (circuit P).localLength input
       = modExpCount P.e * mulModLen (m := m) P.bigIntParams.B P.bigIntParams.W := rfl
   rw [hlen] at h_agree
@@ -910,13 +991,11 @@ theorem computableWitnesses (P : RSAParams p m) [Fact (p > 2)] :
   have hbase : ∀ (e e' : ProverEnvironment (F p)),
       eval e input = eval e' input → eval e input.base = eval e' input.base := by
     intro e e' hin
-    have hm := congrArg (fun s : Inputs m (F p) => s.base) hin
-    simp only [circuit_norm] at hm ⊢; exact hm
+    simp only [circuit_norm]; exact (eval_inputs_parts hin).1
   have hn : ∀ (e e' : ProverEnvironment (F p)),
       eval e input = eval e' input → eval e input.modulus = eval e' input.modulus := by
     intro e e' hin
-    have hm := congrArg (fun s : Inputs m (F p) => s.modulus) hin
-    simp only [circuit_norm] at hm ⊢; exact hm
+    simp only [circuit_norm]; exact (eval_inputs_parts hin).2
   unfold main
   cases h : eBits P.e with
   | nil =>

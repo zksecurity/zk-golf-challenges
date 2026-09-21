@@ -38,12 +38,38 @@ def digestBitsWitness (digest : Var (fields digestBytesLen) (F circomPrime))
       else 0
     ((byteVal / 2 ^ t % 2 : ℕ) : F circomPrime)
 
+/-- Witness-IR program for the 256 digest bits: one `.range` body over the flat bit
+index. The bytes are big-endian, so bit `i` sits in digest byte `31 − i / 8`; reading
+that index out of the *reversed* byte vector turns the truncated subtraction into a
+plain `i / 8`, which the u64 index sort computes exactly (`i / 8 ≤ 31`). The body is a
+pure expression, so the site stays an ordinary `witnessVector`. -/
+def digestBitsIR (digest : Var (fields digestBytesLen) (F circomPrime)) :
+    Witgen.VExpr (F circomPrime) 256 :=
+  .range 256 fun i => ((digest.reverse[i / 8].val >>> (i % 8)) % 2).toField
+
+/-- `digestBitsIR` computes exactly `digestBitsWitness`, the value the proofs are
+stated over. Unconditional: the byte index is exact, and `U64Expr.val`'s truncation to
+`2^64` cannot reach bit `i % 8 < 8`. -/
+theorem eval_digestBitsIR (digest : Var (fields digestBytesLen) (F circomPrime))
+    (env : ProverEnvironment (F circomPrime)) :
+    (digestBitsIR digest).eval { env } = digestBitsWitness digest env := by
+  ext i hi
+  have hlt : i / 8 < digestBytesLen := by show i / 8 < 32; omega
+  have hlt2 : 31 - i / 8 < digestBytesLen := by show 31 - i / 8 < 32; omega
+  rw [digestBitsIR, Witgen.VExpr.range_def, Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi,
+    digestBitsWitness, Vector.getElem_ofFn]
+  simp only [circuit_norm, Vector.getElem_reverse hlt, dif_pos hlt, dif_pos hlt2,
+    Nat.shiftRight_eq_div_pow, show digestBytesLen - 1 - i / 8 = 31 - i / 8 from rfl]
+  congr 1
+  rw [← Nat.toNat_testBit, ← Nat.toNat_testBit, Nat.testBit_mod_two_pow]
+  simp [show i % 8 < 64 by omega]
+
 /-- The `main` circuit: witness the 256 digest bits, check them against the
 digest bytes via one `ByteBlock` assertion, splice them into the constant PKCS#1
 frame and pack the resulting EM bits into a `BigInt 34`. -/
 def main (digest : Var (fields digestBytesLen) (F circomPrime)) :
     Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) := do
-  let digBits ← witnessVector 256 (digestBitsWitness digest)
+  let digBits ← Circuit.witnessVector 256 (digestBitsIR digest)
   ByteBlock.circuit { bytes := digest, bits := digBits }
   return Bytes.packLimbs (Bytes.emBits digBits)
 
@@ -78,7 +104,8 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
     have h := h_assumptions ⟨dj.val, dj.isLt⟩
     simp only [fieldBytesToNat, Fin.getElem_fin, Vector.getElem_map] at h
     exact h
-  -- Run the `ByteBlock` subcircuit spec.
+  -- Run the `ByteBlock` subcircuit spec. `circuit_proof_start` already presents
+  -- `h_holds` in terms of `input`, so no `eval env input_var` bridge is needed.
   obtain ⟨hbits_bool, hbyte_eq⟩ := h_holds hbb_assum
   -- Booleanity of the evaluated witnessed bits, as the deliverable lemmas want it.
   have hbool : ∀ (i : ℕ) (h : i < 256), (Expression.eval env (digBits[i]'h)).val < 2 := by
@@ -120,8 +147,10 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
     · -- IsOctetString EM
       have hsome := BytesLemmas.emsaEncode_eq_emVec
         (Vector.map (fun e => (Expression.eval env e).val) input_var) hoct
-      rw [hsome] at hEM
-      cases hEM
+      have hEM' : some (BytesLemmas.emVec
+          (Vector.map (fun e => (Expression.eval env e).val) input_var)) = some EM :=
+        hsome.symm.trans hEM
+      cases hEM'
       exact BytesLemmas.isOctetString_emVec _ hoct
   · -- requirement (channel-free)
     left
@@ -130,6 +159,8 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
 set_option linter.constructorNameAsVariable false in
 theorem completeness : Completeness (F circomPrime) main Assumptions := by
   circuit_proof_start [main, Assumptions, Spec]
+  -- read the witnessed cells as `digestBitsWitness`, the value `digestBitsIR` computes
+  simp only [eval_digestBitsIR] at h_env
   have hdbl : digestBytesLen = 32 := rfl
   -- `.val` of a nat-cast below `circomPrime` is the nat itself.
   have hcast : ∀ (n : ℕ), n < 2 → ((n : F circomPrime)).val = n := by
@@ -159,7 +190,7 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     intro dj hdj
     have h := h_assumptions ⟨dj, by rw [hdbl]; omega⟩
     simp only [fieldBytesToNat, Fin.getElem_fin, Vector.getElem_map] at h
-    rw [← hev dj hdj]; exact h
+    exact hev dj hdj ▸ h
   -- Booleanity of the witnessed bits.
   have hbool : ∀ (i : ℕ) (hi : i < 256),
       (Expression.eval env.toEnvironment ((Vector.mapRange 256 fun i ↦ var { index := i₀ + i })[i]'hi)).val < 2 := by
@@ -235,7 +266,7 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
       intro j hj
       have := congrArg (fun v : Vector (F circomPrime) digestBytesLen => v[j]'hj) h_input
       simpa only [circuit_norm, Vector.getElem_map] using this
-    simp only [digestBitsWitness]
+    simp only [eval_digestBitsIR, digestBitsWitness]
     apply Vector.ext
     intro i hi
     simp only [Vector.getElem_ofFn]
@@ -243,9 +274,9 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     · rw [dif_pos hj, dif_pos hj, hbytes _ hj]
     · rw [dif_neg hj, dif_neg hj]
   case block =>
-    have hlen : (witnessVector 256 (digestBitsWitness input)).localLength offset = 256 := by
+    have hlen : (Circuit.witnessVector 256 (digestBitsIR input)).localLength offset = 256 := by
       simp only [circuit_norm]
-    set digBits := (witnessVector 256 (digestBitsWitness input)).output offset with hDigBits
+    set digBits := (Circuit.witnessVector 256 (digestBitsIR input)).output offset with hDigBits
     rw [hlen]
     have hcond : ∀ (k : ℕ) (e1 e2 : ProverEnvironment (F circomPrime)),
         offset + 256 ≤ k → e1.AgreesBelow k e2 →
@@ -269,7 +300,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
         apply Vector.ext; intro l hl
         rw [Vector.getElem_map, Vector.getElem_map]
         exact hbits _ _
-      simp only [circuit_norm, hbs_map, hbt_map]
+      simp only [circuit_norm, hbt_map]
+      exact hbs_map
     have result := @FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
       (F circomPrime) _ (fields digestBytesLen) ByteBlock.Inputs _ _
       ByteBlock.circuit input ({ bytes := input, bits := digBits } : Var ByteBlock.Inputs (F circomPrime))

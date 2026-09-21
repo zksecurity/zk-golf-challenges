@@ -6,7 +6,9 @@
         "Solution.Secp256k1ScalarMulFixedBase.completeness",
         "Solution.Secp256k1ScalarMulFixedBase.mainCost",
         "Solution.Secp256k1ScalarMulFixedBase.isR1CS",
-        "Solution.Secp256k1ScalarMulFixedBase.computableWitness"
+        "Solution.Secp256k1ScalarMulFixedBase.witgenIsIR",
+        "Solution.Secp256k1ScalarMulFixedBase.computableWitness",
+        "Solution.Secp256k1ScalarMulFixedBase.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.Secp256k1ScalarMulFixedBase.main",

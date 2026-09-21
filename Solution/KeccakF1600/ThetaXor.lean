@@ -12,17 +12,19 @@ structure Inputs (F : Type) where
   d : KeccakBitRow F
 deriving ProvableStruct
 
-def main : Var Inputs (F p) → Circuit (F p) (Var KeccakBitState (F p))
-  | { state, d } => .mapFinRange 25 fun i =>
-    XorLane.circuit ⟨state[i.val], d[i.val % 5]⟩
+-- NOTE: the argument is destructured through projections rather than a `match`
+-- pattern: since Lean 4.32 a `match` on a struct *variable* no longer reduces
+-- during `elaborate_circuit`/`circuit_norm`, which blocks every downstream proof.
+def main (inputs : Var Inputs (F p)) : Circuit (F p) (Var KeccakBitState (F p)) :=
+  .mapFinRange 25 fun i =>
+    XorLane.circuit ⟨inputs.state[i.val], inputs.d[i.val % 5]⟩
 
 def Assumptions (inputs : Inputs (F p)) : Prop :=
-  let ⟨state, d⟩ := inputs
-  StateNormalized state ∧ RowNormalized d
+  StateNormalized inputs.state ∧ RowNormalized inputs.d
 
 def Spec (inputs : Inputs (F p)) (out : KeccakBitState (F p)) : Prop :=
-  let ⟨state, d⟩ := inputs
-  StateNormalized out ∧ stateValue out = thetaXorSpec (stateValue state) (rowValue d)
+  StateNormalized out ∧
+    stateValue out = thetaXorSpec (stateValue inputs.state) (rowValue inputs.d)
 
 instance elaborated : ElaboratedCircuit (F p) Inputs KeccakBitState main := by
   elaborate_circuit
@@ -50,7 +52,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
     rw [hsi, hdi]; exact ⟨state_norm i, d_norm ⟨i.val % 5, by omega⟩⟩
   obtain ⟨h_val, h_norm⟩ := h_holds i harg
   refine ⟨h_norm, ?_⟩
-  rw [Vector.getElem_ofFn, h_val, hsi, hdi]
+  rw [h_val, hsi, hdi]
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [XorLane.circuit, XorLane.Assumptions, XorLane.Spec]
@@ -93,14 +95,15 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
   refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
     XorLane.circuit input ⟨input.state[i.val], input.d[i.val % 5]⟩ _ ?_ XorLane.computableWitnesses env env'
   intro e1 e2 h_input
+  obtain ⟨istate, id⟩ := input
   simp [circuit_norm] at h_input ⊢
   refine ⟨?_, ?_⟩
   · intro a ha
     have hword :
-        Vector.map (Expression.eval e1.toEnvironment) input.state[i.val] =
-          Vector.map (Expression.eval e2.toEnvironment) input.state[i.val] := by
-      rw [← CircuitType.eval_var_fields e1.toEnvironment (input.state[i.val]),
-        ← CircuitType.eval_var_fields e2.toEnvironment (input.state[i.val])]
+        Vector.map (Expression.eval e1.toEnvironment) istate[i.val] =
+          Vector.map (Expression.eval e2.toEnvironment) istate[i.val] := by
+      rw [← CircuitType.eval_var_fields e1.toEnvironment (istate[i.val]),
+        ← CircuitType.eval_var_fields e2.toEnvironment (istate[i.val])]
       simpa [getElem_eval_vector] using
         congrArg (fun s : KeccakBitState (F p) => s[i.val]'i.isLt) h_input.1
     simp only [Vector.mem_iff_getElem] at ha
@@ -109,10 +112,10 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     simpa [Vector.getElem_map] using Vector.ext_iff.mp hword b hb
   · intro a ha
     have hword :
-        Vector.map (Expression.eval e1.toEnvironment) input.d[i.val % 5] =
-          Vector.map (Expression.eval e2.toEnvironment) input.d[i.val % 5] := by
-      rw [← CircuitType.eval_var_fields e1.toEnvironment (input.d[i.val % 5]),
-        ← CircuitType.eval_var_fields e2.toEnvironment (input.d[i.val % 5])]
+        Vector.map (Expression.eval e1.toEnvironment) id[i.val % 5] =
+          Vector.map (Expression.eval e2.toEnvironment) id[i.val % 5] := by
+      rw [← CircuitType.eval_var_fields e1.toEnvironment (id[i.val % 5]),
+        ← CircuitType.eval_var_fields e2.toEnvironment (id[i.val % 5])]
       simpa [getElem_eval_vector] using
         congrArg (fun s : KeccakBitRow (F p) => s[i.val % 5]'(by omega)) h_input.2
     simp only [Vector.mem_iff_getElem] at ha

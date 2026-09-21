@@ -6,7 +6,9 @@
         "Solution.SHA256.completeness",
         "Solution.SHA256.mainCost",
         "Solution.SHA256.isR1CS",
-        "Solution.SHA256.computableWitness"
+        "Solution.SHA256.witgenIsIR",
+        "Solution.SHA256.computableWitness",
+        "Solution.SHA256.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.SHA256.main",

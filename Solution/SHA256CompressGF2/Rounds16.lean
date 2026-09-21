@@ -25,11 +25,10 @@ instance elaborated (r0 : ℕ) :
     localLength _ := 5776
     output _ i₀ := varFromOffset (fields 256) (i₀ + 5520)
   } using by
-    refine ⟨fun a => ?_, fun a n => ?_, ?_, ?_⟩
+    refine ⟨fun a => ?_, fun a n => ?_, ?_⟩
     · simp only [circuit_norm]
     · simp only [circuit_norm]
-    · simp only [circuit_norm]
-    · simp only [circuit_norm]
+    · intro a ha; exact ha
 
 def Assumptions (_ : fields 768 (F p2)) : Prop := True
 

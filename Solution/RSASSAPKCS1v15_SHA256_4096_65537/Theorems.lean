@@ -996,7 +996,8 @@ end
 
 The Clean library range-check gadget `Gadgets.ToBits.rangeCheck` (and the
 underlying `toBits` circuit) has computable witnesses: its only witness is
-`witnessVector n (fun env => fieldToBits n (x.eval env))`, whose generator reads
+`Circuit.witnessVector n (.range n fun i => ((x.val >>> i) % 2).toField)`, whose
+generator reads
 just the gadget input `x`; the boolean and recomposition constraints are
 assertions and contribute nothing. These shared helpers are used by `Normalize`
 and `EqViaCarries`, both of which range-check limbs/carries with `rangeCheck`. -/
@@ -1027,7 +1028,7 @@ theorem toBits_computableWitnesses (n : ℕ) (hn : 2 ^ n < p) :
   refine ⟨?_, ?_, ?_⟩
   · intro _ h_input
     simp only [circuit_norm] at h_input
-    rw [h_input]
+    simp only [circuit_norm, Witgen.VExpr.range_def, Witgen.VExpr.eval, h_input]
   · intro i
     rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
     simp only [circuit_norm, FlatOperation.forAll,

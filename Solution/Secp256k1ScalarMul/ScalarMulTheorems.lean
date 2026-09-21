@@ -63,12 +63,51 @@ def decodeOutput (out : Outputs (F circomPrime)) :
 lemma step_localLength (inp : Var Step.Inputs (F circomPrime)) :
     Step.circuit.localLength inp = 31959 := rfl
 
+set_option maxRecDepth 8192 in
 lemma step_output (inp : Var Step.Inputs (F circomPrime)) (n : ℕ) :
     Step.circuit.output inp n = varFromOffset FlaggedPoint (n + 31950) := by
   show Step.elaborated.output inp n = _
-  simp only [Step.elaborated]
-  norm_num [secpParams, numLimbs, limbBits]
   congr 1
+  rfl
+
+/-- `varFromOffset` on a `FlaggedPoint`, written out as a record of witness
+blocks. The `varFromOffset` spelling does not reduce cheaply (it goes through the
+`ProvableStruct` `fromComponents`/`Vector.take` machinery), so a struct field
+holding it makes the `circuit_norm` struct-eval simprocs — which validate their
+rewrites by `isDefEq` at `.all` transparency — blow the whnf budget. The record
+form reduces in constant time. -/
+lemma flaggedPointVar_mk (m : ℕ) :
+    ({ x := Vector.mapRange numLimbs fun j => var { index := m + j },
+       y := Vector.mapRange numLimbs fun j => var { index := m + numLimbs + j },
+       isInf := var { index := m + numLimbs + numLimbs } } :
+      Var FlaggedPoint (F circomPrime)) = varFromOffset FlaggedPoint m := by
+  simp only [circuit_norm, explicit_provable_type]
+
+set_option maxRecDepth 8192 in
+/-- `Step`'s output in the record form of `flaggedPointVar_mk`. Fed to
+`circuit_proof_start` so the fold body of `ScalarMul.main` normalizes to a term
+that ignores the running accumulator and is cheap to `whnf`; without it the
+struct-eval simprocs have to reduce a 256-fold nesting of `Step.circuit.output`
+applications. -/
+lemma step_output_mk (inp : Var Step.Inputs (F circomPrime)) (n : ℕ) :
+    Step.circuit.output inp n =
+      ({ x := Vector.mapRange numLimbs fun j => var { index := n + 31950 + j },
+         y := Vector.mapRange numLimbs fun j => var { index := n + 31950 + numLimbs + j },
+         isInf := var { index := n + 31950 + numLimbs + numLimbs } } :
+        FlaggedPoint (Expression (F circomPrime))) := by
+  rw [step_output, flaggedPointVar_mk]
+
+/-- `eval` of a `FlaggedPoint` variable, decomposed field-wise. The struct-eval
+simprocs keep `eval` of a non-literal folded as a row-level atom, so bridge it
+explicitly wherever a field-wise statement is needed. -/
+lemma eval_flaggedPoint_mk (env : Environment (F circomPrime))
+    (v : Var FlaggedPoint (F circomPrime)) :
+    ProvableStruct.eval env v =
+      { x := Vector.map (Expression.eval env) v.x,
+        y := Vector.map (Expression.eval env) v.y,
+        isInf := Expression.eval env v.isInf } := by
+  obtain ⟨x, y, isInf⟩ := v
+  simp only [circuit_norm]
 
 lemma toBytes_localLength (x : Var Emu (F circomPrime)) :
     ToBytes.circuit.localLength x = 288 := rfl
@@ -112,6 +151,27 @@ lemma fin_foldl_eq_accVar (i₀ : ℕ) (k : ℕ) :
   cases k with
   | zero => simp [Fin.foldl_zero, accVar]
   | succ k => exact fin_foldl_ignore_acc k (fun v => varFromOffset FlaggedPoint (i₀ + v * 31959 + 31950)) infConst
+
+set_option maxRecDepth 8192 in
+/-- The is-infinity flag of the final accumulator is the last cell of the last
+step's witness block. Used to state `ScalarMul.elaborated`'s output without a
+`FlaggedPoint` projection (which `whnf` cannot reduce cheaply). -/
+lemma accVar_isInf (i₀ : ℕ) :
+    (accVar i₀ Specs.Secp256k1.scalarBits).isInf
+      = (var { index := i₀ + 8181495 + 8 } : Expression (F circomPrime)) := by
+  rw [show accVar i₀ Specs.Secp256k1.scalarBits
+      = varFromOffset FlaggedPoint (i₀ + 8181495) from rfl]
+  simp only [circuit_norm, explicit_provable_type]
+  norm_num [numLimbs]
+
+set_option maxRecDepth 8192 in
+/-- `accVar_isInf` in the evaluated form the goal carries after
+`circuit_proof_start` (which normalizes `Expression.eval env (var _)` to
+`Environment.get`). -/
+lemma env_get_eq_accVar_isInf (env : Environment (F circomPrime)) (i₀ : ℕ) :
+    env.get (i₀ + 8181495 + 8) = Expression.eval env (accVar i₀ 256).isInf := by
+  rw [show (256 : ℕ) = Specs.Secp256k1.scalarBits from rfl, accVar_isInf]
+  rfl
 
 /-- `Circuit.FoldlM.foldlAcc` of the `ScalarMul` fold body equals `accVar`.
 Stated over a generic `i : Fin scalarBits` so it can rewrite under binders.
@@ -196,27 +256,22 @@ lemma eval_accVar_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F
 lemma eval_accVar_x_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
     (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
     eval env (accVar i₀ k).x = eval env' (accVar i₀ k).x := by
-  have h := eval_accVar_of_agreesBelow i₀ k h_agree
-  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
-  simpa only [circuit_norm] using h.1
+  exact (eval_flaggedPoint_parts (eval_accVar_of_agreesBelow i₀ k h_agree)).1
 
 /-- The `y` coordinate of the fold accumulator is stable under agreement. -/
 lemma eval_accVar_y_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
     (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
     eval env (accVar i₀ k).y = eval env' (accVar i₀ k).y := by
-  have h := eval_accVar_of_agreesBelow i₀ k h_agree
-  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
-  simpa only [circuit_norm] using h.2.1
+  exact (eval_flaggedPoint_parts (eval_accVar_of_agreesBelow i₀ k h_agree)).2.1
 
 /-- The is-infinity flag of the fold accumulator is stable under agreement. -/
 lemma eval_accVar_isInf_of_agreesBelow (i₀ k : ℕ) {env env' : ProverEnvironment (F circomPrime)}
     (h_agree : env.AgreesBelow (i₀ + k * 31959) env') :
     Expression.eval env.toEnvironment (accVar i₀ k).isInf
       = Expression.eval env'.toEnvironment (accVar i₀ k).isInf := by
-  have h := eval_accVar_of_agreesBelow i₀ k h_agree
-  simp only [circuit_norm, FlaggedPoint.mk.injEq] at h
-  simpa only [circuit_norm] using h.2.2
+  exact (eval_flaggedPoint_parts (eval_accVar_of_agreesBelow i₀ k h_agree)).2.2
 
+set_option maxRecDepth 8192 in
 /-- The fold term as it appears in the *goal* after `circuit_proof_start` +
 numeral normalization (the elaborated output unfolds `varFromOffset` to
 `Vector.mapRange`, with the step offset split as `15975 + 15975`), rewritten
@@ -258,6 +313,17 @@ def specAcc (bits : Vector ℕ Specs.Secp256k1.scalarBits)
       Specs.ShortWeierstrass.step Specs.Secp256k1.curve P (specAcc bits P k) (bits[k]'h)
     else specAcc bits P k
 
+/-- `Fin.foldl` as a `List.foldl` over `List.finRange`. Restated locally: clean's
+`Utils/Misc.lean` dropped `Fin.foldl_eq_foldl_finRange` in the 4.32 bump. -/
+private lemma fin_foldl_eq_foldl_finRange {α : Type} (n : ℕ) (f : α → Fin n → α) (init : α) :
+    Fin.foldl n f init = (List.finRange n).foldl f init := by
+  induction n generalizing init with
+  | zero => simp
+  | succ n ih =>
+    simp only [Fin.foldl_succ, List.finRange_succ, List.foldl_cons]
+    specialize ih (fun x i => f x i.succ) (f init 0)
+    rw [ih, List.foldl_map]
+
 private lemma vector_foldl_eq_fin_foldl {α β : Type} {n : ℕ} (v : Vector α n)
     (f : β → α → β) (init : β) :
     v.foldl f init = Fin.foldl n (fun acc i => f acc v[i]) init := by
@@ -265,7 +331,7 @@ private lemma vector_foldl_eq_fin_foldl {α β : Type} {n : ℕ} (v : Vector α 
     cases v; simp [Vector.foldl, Array.foldl_toList]
   have h2 : List.map (fun i : Fin n => v[i]) (List.finRange n) = v.toList := by
     apply List.ext_getElem <;> simp
-  rw [h1, ← h2, List.foldl_map, Fin.foldl_eq_foldl_finRange]
+  rw [h1, ← h2, List.foldl_map, fin_foldl_eq_foldl_finRange]
 
 /-- The trusted spec's `scalarMul` is `specAcc` at the full bit length. -/
 lemma scalarMul_eq_specAcc (bits : Vector ℕ Specs.Secp256k1.scalarBits)
@@ -278,8 +344,7 @@ lemma scalarMul_eq_specAcc (bits : Vector ℕ Specs.Secp256k1.scalarBits)
         Specs.ShortWeierstrass.step Specs.Secp256k1.curve P acc
           (bits[i.val]'(by have := i.isLt; omega))) .infinity
         = specAcc bits P k by
-    have := h Specs.Secp256k1.scalarBits (le_refl _)
-    convert this using 1
+    exact h Specs.Secp256k1.scalarBits (le_refl _)
   intro k hk
   induction k with
   | zero => simp [specAcc, Fin.foldl_zero]
@@ -356,7 +421,6 @@ lemma fromLimbs_rev_ofFn (w : Vector (F circomPrime) coordBytes) :
     simp only [List.length_map, List.length_ofFn, List.length_reverse,
       Vector.length_toList, coordBytes] at h1 h2 ⊢
     simp only [show (31 : ℕ) - (32 - 1 - j) = j from by omega]
-    rfl
 
 /-- `fromLimbs` of an all-zero list is zero. -/
 lemma fromLimbs_replicate_zero (B n : ℕ) :
@@ -376,7 +440,7 @@ lemma eval_zeroBytes_getElem (env : Environment (F circomPrime))
     (j : ℕ) (hj : j < coordBytes) :
     (Vector.map (Expression.eval env) v)[j]'hj = 0 := by
   subst h
-  simp [Vector.getElem_map, Vector.getElem_ofFn, Expression.eval]
+  simp [Vector.getElem_ofFn, Expression.eval]
 
 /-- The evaluated `zeroBytes` constant recomposes to zero. -/
 lemma fromLimbs_eval_zeroBytes (env : Environment (F circomPrime))
@@ -505,7 +569,7 @@ lemma fold_invariant (i₀ : ℕ) (env : Environment (F circomPrime))
             (varFromOffset FlaggedPoint (i₀ + i.val * 31959 + 31950)).y,
           isInf := Expression.eval env
             (varFromOffset FlaggedPoint (i₀ + i.val * 31959 + 31950)).isInf }) :
-    ∀ k (hk : k ≤ Specs.Secp256k1.scalarBits),
+    ∀ k, k ≤ Specs.Secp256k1.scalarBits →
       IsBool (Expression.eval env (accVar i₀ k).isInf) ∧
       Fe.Valid (Vector.map (Expression.eval env) (accVar i₀ k).x) ∧
       Fe.Valid (Vector.map (Expression.eval env) (accVar i₀ k).y) ∧

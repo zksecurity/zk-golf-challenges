@@ -6,7 +6,9 @@
         "Solution.KeccakF1600.completeness",
         "Solution.KeccakF1600.mainCost",
         "Solution.KeccakF1600.isR1CS",
-        "Solution.KeccakF1600.computableWitness"
+        "Solution.KeccakF1600.witgenIsIR",
+        "Solution.KeccakF1600.computableWitness",
+        "Solution.KeccakF1600.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.KeccakF1600.main",

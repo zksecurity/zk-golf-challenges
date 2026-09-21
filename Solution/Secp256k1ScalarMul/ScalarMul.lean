@@ -54,7 +54,7 @@ deriving ProvableStruct
 subcircuit). Passed to `Circuit.foldlRange` explicitly because the default
 synthesis tactic times out unfolding the nested gadget tree (cf. the same
 pattern in Clean's `SHA256Schedule`). -/
-private def constantLength (input : Var Inputs (F circomPrime)) :
+@[reducible] private def constantLength (input : Var Inputs (F circomPrime)) :
     Circuit.ConstantLength
       (fun (x : Var FlaggedPoint (F circomPrime) × Fin Specs.Secp256k1.scalarBits) =>
         subcircuit Step.circuit
@@ -105,8 +105,34 @@ def main (input : Var Inputs (F circomPrime)) :
     isInf := acc.isInf
   }
 
+set_option maxRecDepth 8192 in
+/-- The elaborated data is pinned to closed forms: the total local length as a
+numeral, and the output as the two masked byte blocks (read big-endian) plus the
+fold accumulator's is-infinity flag. Left to `elaborate_circuit`, both carry the
+loop's offset arithmetic symbolically (`scalarBits`, `numLimbs`, `secpParams.B`,
+`secpParams.W` never collapse), and the struct-eval simprocs then validate their
+rewrites by `isDefEq` on that unreduced tree, which explodes. -/
 instance elaborated : ElaboratedCircuit (F circomPrime) Inputs Outputs main := by
-  elaborate_circuit
+  elaborate_circuit_with {
+    localLength _ := 8182144
+    output _ i₀ := {
+      x := Vector.ofFn fun i : Fin coordBytes =>
+        var { index := i₀ + 8181504 + 288 + 288 + (31 - i.val) }
+      y := Vector.ofFn fun i : Fin coordBytes =>
+        var { index := i₀ + 8181504 + 288 + 288 + 32 + (31 - i.val) }
+      isInf := var { index := i₀ + 8181495 + 8 } }
+  } using by
+    -- `secpParams` is unfolded through its two numeric fields: unfolding the whole
+    -- structure drags in its `by decide` proof fields and blows the whnf budget.
+    have hB : secpParams.B = limbBits := rfl
+    have hW : secpParams.W = 69 := rfl
+    refine ⟨fun a => rfl, fun a i₀ => ?_, ?_⟩
+    · simp only [circuit_norm]
+      simp only [hB, hW, numLimbs, limbBits, Specs.Secp256k1.scalarBits, coordBytes,
+        Nat.reduceAdd, Nat.reduceMul, Nat.reduceSub, Nat.reduceLT, reduceIte,
+        fin_foldl_goal_eq_accVar, accVar_isInf]
+      exact ⟨trivial, trivial, trivial⟩
+    · intro a ha; exact ha
 
 /-- Preconditions: the scalar entries are bits, and the base point has
 canonical coordinates and lies on the curve. -/
@@ -127,27 +153,45 @@ def Spec (input : Inputs (F circomPrime)) (out : Outputs (F circomPrime)) : Prop
 
 set_option maxRecDepth 8192 in
 theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
-  circuit_proof_start
+  circuit_proof_start [step_localLength, step_output_mk]
   obtain ⟨h_steps, h_tbx, h_tby, h_muxx, h_muxy⟩ := h_holds
   obtain ⟨h_bits, h_px, h_py⟩ := h_input
+  simp only [flaggedPointVar_mk] at h_steps h_tbx h_tby h_muxx h_muxy ⊢
   simp only [Circuit.FoldlM.foldlAcc, Vector.getElem_finRange] at h_steps
   simp only [circuit_norm] at h_steps
   simp only [step_localLength, step_output, fin_foldl_eq_accVar] at h_steps
+  -- `varFromOffset` on a `ProvableStruct` no longer iota-reduces through `eval`,
+  -- so decompose it explicitly; otherwise the loop-body spec stays wrapped in
+  -- `fromComponents (eval.go …)` and every later unification has to grind
+  -- through it.
+  simp only [circuit_norm, explicit_provable_type] at h_steps
+  simp only [eval_flaggedPoint_mk] at h_steps
   simp only [step_localLength, step_output, fin_foldl_eq_accVar, toBytes_localLength,
     toBytes_output, mux_localLength, mux_output] at h_tbx h_tby h_muxx h_muxy
+  simp only [eval_flaggedPoint_mk, Mux.circuit, Mux.Assumptions, Mux.Spec] at h_muxx h_muxy
   norm_num [Specs.Secp256k1.scalarBits] at h_tbx h_tby h_muxx h_muxy
   simp only [secpParams, numLimbs, limbBits, Specs.Secp256k1.scalarBits, coordBytes,
     List.sum_cons, List.sum_nil, Nat.reduceAdd, Nat.reduceMul, Nat.reduceSub, Nat.reduceLT,
     reduceIte, reduceDIte, fin_foldl_goal_eq_accVar]
+  rw [env_get_eq_accVar_isInf env i₀]
   obtain ⟨hbits_bool, hpx_valid, hpy_valid, honcurve⟩ := h_assumptions
   obtain ⟨hbool, hfx, hfy, -, hdec256⟩ :=
     fold_invariant i₀ env input_bits input_px input_py input_var_bits h_bits
-      hbits_bool hpx_valid hpy_valid honcurve h_steps 256 (le_refl 256)
+      hbits_bool hpx_valid hpy_valid honcurve
+      -- `eval` of the loop output is left as `fromComponents (eval.go …)` by
+      -- `circuit_norm` (the components list no longer iota-reduces on a
+      -- non-constructor), so bridge it to the record form field-wise instead of
+      -- letting the unifier grind through it.
+      (fun i hA => by
+        have h := h_steps i hA
+        convert h using 2 <;> simp only [circuit_norm, explicit_provable_type])
+      256 (le_refl 256)
   unfold ToBytes.circuit ToBytes.Assumptions ToBytes.Spec at h_tbx h_tby
-  unfold Mux.circuit Mux.Assumptions Mux.Spec at h_muxx h_muxy
-  dsimp only [] at h_tbx h_tby h_muxx h_muxy
+  dsimp only [] at h_tbx h_tby
   obtain ⟨hxb_bytes, hxb_val⟩ := h_tbx hfx.1
   obtain ⟨hyb_bytes, hyb_val⟩ := h_tby hfy.1
+  -- the `Mux` input struct stays in its `fromComponents` form; feed/read the
+  -- spec through the structural bridges instead of unfolding it
   have hmx := h_muxx hbool
   have hmy := h_muxy hbool
   exact ⟨⟨output_valid i₀ env zeroBytes rfl hbool hfx hfy hxb_bytes hxb_val
@@ -158,15 +202,23 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
 
 set_option maxRecDepth 8192 in
 theorem completeness : Completeness (F circomPrime) main Assumptions := by
-  circuit_proof_start
+  circuit_proof_start [step_localLength, step_output_mk]
   obtain ⟨h_bits, h_px, h_py⟩ := h_input
   obtain ⟨hbits_bool, hpx_valid, hpy_valid, honcurve⟩ := h_assumptions
   obtain ⟨h_steps, -, -, -, -⟩ := h_env
+  simp only [flaggedPointVar_mk] at h_steps ⊢
   simp only [Circuit.FoldlM.foldlAcc, Vector.getElem_finRange] at h_steps
   simp only [circuit_norm] at h_steps
   simp only [step_localLength, step_output, fin_foldl_eq_accVar] at h_steps
+  -- see the note in `soundness`: decompose `varFromOffset` on the loop output so
+  -- the per-step spec is a record literal again
+  simp only [circuit_norm, explicit_provable_type] at h_steps
+  simp only [eval_flaggedPoint_mk] at h_steps
   have h_inv := fold_invariant i₀ env.toEnvironment input_bits input_px input_py
-    input_var_bits h_bits hbits_bool hpx_valid hpy_valid honcurve h_steps
+    input_var_bits h_bits hbits_bool hpx_valid hpy_valid honcurve
+    (fun i hA => by
+      have h := h_steps i hA
+      convert h using 2 <;> simp only [circuit_norm, explicit_provable_type])
   obtain ⟨hbool, hfx, hfy, -, -⟩ := h_inv 256 (le_refl 256)
   refine ⟨fun i => ?_, ?_, ?_, ?_, ?_⟩
   · -- Step assumptions at each fold index
@@ -175,6 +227,7 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     have hbit : IsBool (Expression.eval env.toEnvironment input_var_bits[i.val]) := by
       have h := hbits_bool i
       rwa [← h_bits, Vector.getElem_map] at h
+    simp only [eval_flaggedPoint_mk]
     exact ⟨⟨ib, ifx, ify, icurve⟩, hbit, hpx_valid, hpy_valid, honcurve⟩
   · -- ToBytes assumptions (x)
     unfold ToBytes.circuit ToBytes.Assumptions
@@ -187,14 +240,12 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     simp only [step_localLength, step_output, fin_foldl_eq_accVar]
     exact hfy.1
   · -- Mux assumptions (x mask)
-    unfold Mux.circuit Mux.Assumptions
-    dsimp only []
-    simp only [step_localLength, step_output, fin_foldl_eq_accVar]
+    simp only [step_localLength, step_output, fin_foldl_eq_accVar, eval_flaggedPoint_mk,
+      Mux.circuit, Mux.Assumptions]
     exact hbool
   · -- Mux assumptions (y mask)
-    unfold Mux.circuit Mux.Assumptions
-    dsimp only []
-    simp only [step_localLength, step_output, fin_foldl_eq_accVar]
+    simp only [step_localLength, step_output, fin_foldl_eq_accVar, eval_flaggedPoint_mk,
+      Mux.circuit, Mux.Assumptions]
     exact hbool
 
 set_option maxRecDepth 8192 in
@@ -285,8 +336,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
         Expression.eval e'.toEnvironment bits[i.val] := by
       have := Vector.ext_iff.mp hbits i.val i.isLt
       simpa only [Vector.getElem_map] using this
-    simp only [circuit_norm, Step.Inputs.mk.injEq, FlaggedPoint.mk.injEq] at hacc ⊢
-    exact ⟨⟨hacc.1, hacc.2.1, hacc.2.2⟩, hpx, hpy, hbit⟩
+    exact Step.eval_inputs_mk hacc (by simp only [circuit_norm]; exact hpx)
+      (by simp only [circuit_norm]; exact hpy) hbit
   · -- ToBytes on acc.x
     rw [foldl_output_eq_accVar offset bits px py]
     refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
@@ -312,15 +363,13 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
           (offset + 8181504) }
       (offset + 8181504 + 288 + 288) ?_ (Mux.computableWitnesses (M := fields coordBytes)) env env'
     intro k e e' hle h_agree h_in
-    simp only [circuit_norm, Mux.Inputs.mk.injEq]
-    refine ⟨?_, ?_, ?_⟩
+    refine Mux.eval_inputs_mk ?_ ?_ ?_
     · exact eval_accVar_isInf_of_agreesBelow offset Specs.Secp256k1.scalarBits
         (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
-    · apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
-    · have hxb := toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).x
+    · simp only [circuit_norm]
+      apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
+    · exact toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).x
         (o := offset + 8181504) h_agree (by omega)
-      simp only [circuit_norm] at hxb ⊢
-      exact hxb
   · -- Mux on the y bytes
     rw [foldl_output_eq_accVar offset bits px py]
     refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
@@ -330,15 +379,13 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
           (offset + 8181504 + 288) }
       (offset + 8181504 + 288 + 288 + 32) ?_ (Mux.computableWitnesses (M := fields coordBytes)) env env'
     intro k e e' hle h_agree h_in
-    simp only [circuit_norm, Mux.Inputs.mk.injEq]
-    refine ⟨?_, ?_, ?_⟩
+    refine Mux.eval_inputs_mk ?_ ?_ ?_
     · exact eval_accVar_isInf_of_agreesBelow offset Specs.Secp256k1.scalarBits
         (ProverEnvironment.agreesBelow_of_le h_agree (by simp only [Specs.Secp256k1.scalarBits]; omega))
-    · apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
-    · have hyb := toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).y
+    · simp only [circuit_norm]
+      apply Vector.ext; intro j hj; simp [zeroBytes, Expression.eval]
+    · exact toBytes_output_stable (accVar offset Specs.Secp256k1.scalarBits).y
         (o := offset + 8181504 + 288) h_agree (by omega)
-      simp only [circuit_norm] at hyb ⊢
-      exact hyb
 
 theorem computableWitness : ∀ n input,
     ProverEnvironment.OnlyAccessedBelow n

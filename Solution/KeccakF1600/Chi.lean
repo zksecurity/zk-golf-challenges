@@ -42,7 +42,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
     exact ⟨h_assumptions j, h_assumptions (chiSource1 j), h_assumptions (chiSource2 j)⟩
   obtain ⟨h_val, h_norm⟩ := h_holds j harg
   refine ⟨h_norm, ?_⟩
-  rw [Vector.getElem_ofFn, h_val, hb _ j.isLt, hb _ (chiSource1 j).isLt, hb _ (chiSource2 j).isLt]
+  rw [h_val, hb _ j.isLt, hb _ (chiSource1 j).isLt, hb _ (chiSource2 j).isLt]
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [ChiLane.circuit, ChiLane.Assumptions, ChiLane.Spec]

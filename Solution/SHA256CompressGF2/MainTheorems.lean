@@ -101,13 +101,17 @@ variable {env env' : ProverEnvironment (F p2)}
 
 theorem eval_input_h_congr {v : Var Input (F p2)} (h : eval env v = eval env' v) :
     eval env v.h = eval env' v.h := by
-  have h2 := congrArg (fun s : Input (F p2) => s.h) h
-  simpa [circuit_norm] using h2
+  obtain ⟨vh, vm⟩ := v
+  simp only [circuit_norm, explicit_provable_type, Input.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_input_m_congr {v : Var Input (F p2)} (h : eval env v = eval env' v) :
     eval env v.m = eval env' v.m := by
-  have h2 := congrArg (fun s : Input (F p2) => s.m) h
-  simpa [circuit_norm] using h2
+  obtain ⟨vh, vm⟩ := v
+  simp only [circuit_norm, explicit_provable_type, Input.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2
 
 theorem eval_w256_congr {v : Var (fields 256) (F p2)} (h : eval env v = eval env' v) (k : ℕ) :
     eval env (w256 v k) = eval env' (w256 v k) := by

@@ -105,7 +105,7 @@ child circuit's declared output. Proved with the circuit abstract, so the `rfl`
 is checked once, cheaply — a later instantiation at a heavy child (e.g. `ModExp`)
 is a plain substitution and never forces the kernel to unfold the child's
 operations. Used by `Main.computableWitness` to keep `ModExp`'s output opaque. -/
-theorem subcircuit_output_eq {F : Type} [Field F] {β α : TypeMap}
+theorem subcircuit_output_eq {F : Type} [FiniteField F] {β α : TypeMap}
     [ProvableType β] [ProvableType α]
     (c : FormalCircuit F β α) (b : Var β F) (n : ℕ) :
     (subcircuit c b).output n = c.output b n := rfl
@@ -113,7 +113,7 @@ theorem subcircuit_output_eq {F : Type} [Field F] {β α : TypeMap}
 /-- Companion to `subcircuit_output_eq`: the subcircuit's flat local length equals
 the child's declared `localLength`. Also proved circuit-abstract, so instantiating
 it at `ModExp` never forces the kernel to build `ModExp`'s operations. -/
-theorem subcircuit_localLength_eq {F : Type} [Field F] {β α : TypeMap}
+theorem subcircuit_localLength_eq {F : Type} [FiniteField F] {β α : TypeMap}
     [ProvableType β] [ProvableType α]
     (c : FormalCircuit F β α) (b : Var β F) (n : ℕ) :
     (subcircuit c b).localLength n = c.localLength b := rfl
@@ -169,6 +169,18 @@ lemma modExp4096_output (input : Var (ModExp.Inputs numLimbs) (F circomPrime)) (
   rw [ModExp.main_output_of_tail params4096 input offset
     (headBit := true) (b2 := false) (r2 := List.replicate 14 false ++ [true]) h]
   congr 2
+
+/-- Per-field projection of an `eval`-agreement hypothesis on the trusted `Input`
+struct. The `Var Input` `match` no longer iota-reduces on a struct *variable*, so
+the destructuring has to happen here, once. -/
+lemma eval_input_parts_eq {input : Var Input (F circomPrime)}
+    {e1 e2 : ProverEnvironment (F circomPrime)} (h : eval e1 input = eval e2 input) :
+    eval e1 input.modulus = eval e2 input.modulus ∧
+      eval e1 input.digest = eval e2 input.digest ∧
+      eval e1 input.signature = eval e2 input.signature := by
+  obtain ⟨modulus, digest, signature⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Input.mk.injEq] at h ⊢
+  exact h
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
 

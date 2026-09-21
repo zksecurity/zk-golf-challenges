@@ -10,11 +10,18 @@ open Challenge.F2Bits
 
 namespace Round
 
+/-- One round: witness the χ products, constrain each to the circuit expression
+`chiProduct pre i`, and recombine.
+
+The witness program is a literal vector of those same circuit expressions, embedded
+into the witness IR through `FExpr.expr` (the generator copies the value of an
+already-built circuit expression, so no `let`-steps are needed); cell `i` therefore
+reads back as the evaluation of `chiProduct pre i`. -/
 def main (r : Fin Specs.KangarooTwelve.rounds) (s : StateVar) :
     Circuit (F p2) StateVar := do
   let pre := preChi s
-  let products ← witnessVector permutationBits (fun env =>
-    Vector.ofFn fun i : Fin permutationBits => (chiProduct pre i).eval env)
+  let products ← Circuit.witnessVector permutationBits
+    (.lit <| .ofFn fun i : Fin permutationBits => Witgen.FExpr.expr (chiProduct pre i))
   Circuit.forEach (Vector.finRange permutationBits) (fun i =>
     assertZero (products[i.val]'i.isLt - chiProduct pre i))
   return roundOut r pre products
@@ -24,27 +31,28 @@ instance elaborated (r : Fin Specs.KangarooTwelve.rounds) :
   elaborate_circuit
 
 /-- Index into the witness block without materialising it (cf. `Cost.wv_getElem`). -/
-theorem wv_getElem {m : ℕ} (c : ProverEnvironment (F p2) → Vector (F p2) m)
+theorem wv_getElem {m : ℕ} (out : Witgen.VExpr (F p2) m)
     (w i : ℕ) (h : i < m) :
-    ((Circuit.witnessVector m c).output w)[i]'h = Expression.var ⟨w + i⟩ := by
-  rw [show (Circuit.witnessVector m c).output w = varFromOffset (fields m) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+    ((Circuit.witnessVector m out).output w)[i]'h = Expression.var ⟨w + i⟩ := by
+  rw [show (Circuit.witnessVector m out).output w = varFromOffset (fields m) w from rfl]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange]
 
 /-- A condition on the round's operations reduces to the witness obligation plus one per row. -/
 theorem forAllNoOffset_main (cond : ConditionNoOffset (F p2))
     (r : Fin Specs.KangarooTwelve.rounds) (s : StateVar) (n : ℕ) :
     Operations.forAllNoOffset cond ((main r s).operations n) ↔
       cond.witness permutationBits
-          (fun env => Vector.ofFn fun i : Fin permutationBits => (chiProduct (preChi s) i).eval env)
+          (.ir [] (.lit <| .ofFn fun i : Fin permutationBits =>
+            Witgen.FExpr.expr (chiProduct (preChi s) i)))
         ∧ ∀ i : Fin permutationBits,
             cond.assert ((Expression.var ⟨n + i.val⟩ : Expression (F p2))
               - chiProduct (preChi s) i) := by
   unfold main
   rw [Circuit.bind_operations_eq, Operations.forAllNoOffset_append,
       Circuit.bind_operations_eq, Operations.forAllNoOffset_append,
-      Circuit.forEach.forAllNoOffset]
+      Circuit.forEach.forAllNoOffset, Circuit.pure_operations_eq]
   simp only [Circuit.operations, Circuit.witnessVector, Circuit.assertZero,
-    Operations.forAllNoOffset, Vector.getElem_finRange, wv_getElem, and_true]
+    Operations.forAllNoOffset, Vector.getElem_finRange, wv_getElem, Fin.eta, and_true]
 
 def Assumptions (_ : fields permutationBits (F p2)) : Prop := True
 
@@ -97,8 +105,10 @@ theorem completeness (r : Fin Specs.KangarooTwelve.rounds) :
   simp only [circuit_norm] at h_wit
   simp only [ConstraintsHold.Completeness, forAllNoOffset_main]
   refine ⟨trivial, fun i => ?_⟩
+  -- the witness program is a literal vector of the `chiProduct` expressions, so
+  -- the witness obligation reads each cell back as its evaluation
   have henv := h_wit i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
+  simp only [circuit_norm] at henv ⊢
   rw [henv]
   ring
 
@@ -137,7 +147,9 @@ theorem computableWitnesses (r : Fin Specs.KangarooTwelve.rounds) :
         = Vector.map (Expression.eval env'.toEnvironment) (preChi input) := by
       rw [eval_preChi, eval_preChi, hmap]
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal `chiProduct` expression, so it reads only
+    -- the input state
+    simp only [circuit_norm]
     rw [eval_chiProduct env.toEnvironment (preChi input) ⟨i, hi⟩,
       eval_chiProduct env'.toEnvironment (preChi input) ⟨i, hi⟩, hpre]
   · rw [Circuit.bind_structuralComputableWitnesses_iff]

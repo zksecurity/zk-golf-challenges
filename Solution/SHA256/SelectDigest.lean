@@ -34,9 +34,15 @@ def selectedDigestExpr (input : Var Inputs (F p)) (w : Fin 8) : Expression (F p)
     (fun acc len => acc + input.lenFlags[len] * selectedWordExpr input w len)
     0
 
+/-- Witness the eight selected digest words and pin each against every candidate state,
+gated by the one-hot length flags.
+
+The witness program is a literal vector of the circuit expressions
+`selectedDigestExpr input w`, embedded into the witness IR through `FExpr.expr`, so
+cell `w` reads back as their evaluation. -/
 def main (input : Var Inputs (F p)) : Circuit (F p) (Var (fields 8) (F p)) := do
-  let digest ← witnessVector 8 fun env =>
-    Vector.ofFn fun w => env (selectedDigestExpr input w)
+  let digest ← Circuit.witnessVector 8
+    (.lit <| .ofFn fun w : Fin 8 => Witgen.FExpr.expr (selectedDigestExpr input w))
   Circuit.forEach (Vector.finRange 8) fun w =>
     Circuit.forEach (Vector.finRange inputBufferLen) fun len =>
       assertZero (input.lenFlags[len] * (digest[w] - selectedWordExpr input w len))
@@ -76,7 +82,6 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
     simpa [selectedLen] using this
   have hrow := h_holds w selectedLen
   rw [hflag_eval, hflag_one, one_mul] at hrow
-  rw [← sub_eq_add_neg] at hrow
   have hdigest :
       env.get (i₀ + w.val) = Expression.eval env (selectedWordExpr varRec w selectedLen) :=
     sub_eq_zero.mp hrow
@@ -132,6 +137,8 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
 omit h_large in
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start
+  -- `circuit_norm` already reads the witnessed cells as `selectedDigestExpr`
+  -- (the IR generator is a literal vector of those circuit expressions)
   obtain ⟨h_len, h_onehot, _h_norm⟩ := h_assumptions
   obtain ⟨_h_msg, h_flags, _h_s1, _h_s2, _h_s3, _h_s4, _h_s5⟩ := h_input
   set varRec : Inputs (Expression (F p)) :=
@@ -146,7 +153,7 @@ theorem completeness : Completeness (F p) main Assumptions := by
     intro i
     simp [← h_flags, Vector.getElem_map]
   have hdigest : env.get (i₀ + w.val) = ∑ i : Fin inputBufferLen, input_lenFlags[i] * g i := by
-    rw [h_env w, Vector.getElem_ofFn]
+    rw [h_env w]
     rw [selectedDigestExpr, eval_finFoldl_add]
     apply Finset.sum_congr rfl
     intro i _
@@ -186,7 +193,18 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
-    simp [circuit_norm] at h_input
+    have hall :
+        (∀ a ∈ input.lenFlags, Expression.eval env.toEnvironment a =
+            Expression.eval env'.toEnvironment a) ∧
+          eval env.toEnvironment input.s1 = eval env'.toEnvironment input.s1 ∧
+          eval env.toEnvironment input.s2 = eval env'.toEnvironment input.s2 ∧
+          eval env.toEnvironment input.s3 = eval env'.toEnvironment input.s3 ∧
+          eval env.toEnvironment input.s4 = eval env'.toEnvironment input.s4 ∧
+          eval env.toEnvironment input.s5 = eval env'.toEnvironment input.s5 := by
+      obtain ⟨_m, _f, _s1, _s2, _s3, _s4, _s5⟩ := input
+      simp [circuit_norm] at h_input
+      exact ⟨h_input.2.1, h_input.2.2.1, h_input.2.2.2.1, h_input.2.2.2.2.1,
+        h_input.2.2.2.2.2.1, h_input.2.2.2.2.2.2⟩
     have estate : ∀ sv : SHA256State (Expression (F p)),
         eval env.toEnvironment sv = eval env'.toEnvironment sv →
         sv.map (Vector.map (Expression.eval env.toEnvironment)) =
@@ -213,13 +231,19 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
               st.map (Vector.map (Expression.eval env.toEnvironment))) =
             (statesVec input).map (fun st =>
               st.map (Vector.map (Expression.eval env'.toEnvironment))) := by
-        simp only [statesVec, Vector.map_mk, List.map_toArray, List.map_cons,
-          List.map_nil,
-          estate input.s1 h_input.2.2.1,
-          estate input.s2 h_input.2.2.2.1,
-          estate input.s3 h_input.2.2.2.2.1,
-          estate input.s4 h_input.2.2.2.2.2.1,
-          estate input.s5 h_input.2.2.2.2.2.2]
+        -- Rewriting the five states inside the vector literal builds a
+        -- `Vector.mk_congr` chain whose kernel check blows the reduction budget
+        -- on Lean 4.33; the elementwise congruence lemma keeps the term shallow.
+        apply Vector.map_congr_left
+        intro st hst
+        simp only [statesVec, Vector.mem_mk, List.mem_toArray, List.mem_cons,
+          List.not_mem_nil, or_false] at hst
+        rcases hst with rfl | rfl | rfl | rfl | rfl
+        · exact estate input.s1 hall.2.1
+        · exact estate input.s2 hall.2.2.1
+        · exact estate input.s3 hall.2.2.2.1
+        · exact estate input.s4 hall.2.2.2.2.1
+        · exact estate input.s5 hall.2.2.2.2.2
       have hselected :=
         congrArg (fun v : Vector (SHA256State (F p)) paddedBlocksLen =>
           (stateForLen v len.val)[w]) hstates
@@ -240,14 +264,16 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       exact congrArg Utils.Bits.fieldFromBits hselected'
     apply Vector.ext
     intro w hw
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal `selectedDigestExpr`, so it reads only the
+    -- flags and the candidate states
+    simp only [circuit_norm]
     unfold selectedDigestExpr
     rw [eval_finFoldl_add, eval_finFoldl_add]
     apply Finset.sum_congr rfl
     intro len _
     simp only [Expression.eval]
     congr 1
-    · exact h_input.2.1 input.lenFlags[len] (Vector.getElem_mem _)
+    · exact hall.1 input.lenFlags[len] (Vector.getElem_mem _)
     · exact hword ⟨w, hw⟩ len
   · intro _ _
     trivial

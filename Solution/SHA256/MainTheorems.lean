@@ -1,9 +1,11 @@
 import Challenge.Instances.SHA256.Interface
 import Solution.SHA256.PaddingTheorems
+import Solution.SHA256.WitgenU64
 
 namespace Solution.SHA256
 
 open Challenge.Instances.SHA256.Interface
+open Solution.SHA256.WitgenU64
 
 /-!
 # Helper lemmas for the top-level `Main` circuit
@@ -21,9 +23,327 @@ def paddedBitsWitness (input : Var Input (F circomPrime))
     (env : ProverEnvironment (F circomPrime)) : SHA256PaddedBits (F circomPrime) :=
   paddedBitsValue ((eval env input.message).map ZMod.val) (Expression.eval env input.messageLen).val
 
-def lenFlagsWitness (input : Var Input (F circomPrime))
-    (env : ProverEnvironment (F circomPrime)) : fields inputBufferLen (F circomPrime) :=
-  lenFlagsValue (Expression.eval env input.messageLen).val
+/-!
+## Witness generation through the witness IR
+
+`main` witnesses two vectors of its own, the padded message bits and the one-hot
+length flags, and generates both with deep-embedded witness programs. Each is a single
+O(1)-size `.range` body: the 2560 padded bits share one loop body over the flat bit
+index, and the 256 length flags share one equality test. The flag program is a
+one-liner and lives inline in `main`; only the padded bits get a named program
+(`paddedBitsIR`) here, with the `getElem_eval_*` bridges below connecting it to
+`paddedBitsWitness`, the value every functional proof is stated over. Every truncated
+subtraction goes through this solution's own `nsub` helper, whose side conditions only
+have to hold in the `.ite` branch actually taken.
+-/
+
+section WitgenIR
+
+/-! ### The ℕ view of the u64 sort, and truncated subtraction
+
+The witness IR's integer sort is `UInt64`: every operation wraps modulo `2^64`. All the
+padding arithmetic below is byte offsets and lengths under `2^16`, so the wrap never
+fires and the honest value of a program is its `UInt64.toNat`. `nval` names that view,
+so the bridges stay stated over `ℕ` exactly as they were.
+
+The sort has no subtraction, but it wraps, so `a + (2^64 - 1) · b` *is* `a - b`
+whenever `b ≤ a`. That is `nsub`: unlike a field round trip it needs no bound on the
+minuend, only `b ≤ a` — and because `U64Expr.eval` of an `.ite` only evaluates the
+branch taken, an `nsub` sitting in an untaken branch needs nothing at all. Witgen
+helpers are solution-local (the analogue of a circom function), so both live in
+`Solution/SHA256/WitgenU64.lean` rather than in the trusted challenge project. -/
+
+/-! ### Subtraction-free closed form of the block count
+
+`numBlocksForLen` is spelled with a truncated subtraction inside a `% 64`; the
+equivalent `(len + 72) / 64` has none, which keeps `totalLenIR` free of `nsub`. -/
+
+theorem numBlocksForLen_eq (len : ℕ) : numBlocksForLen len = (len + 72) / 64 := by
+  unfold numBlocksForLen; omega
+
+/-! ### The witness-IR programs -/
+
+/-- The padded length in bytes, `numBlocksForLen len * 64`, spelled through the
+subtraction-free block count `(len + 72) / 64`. -/
+def totalLenIR (len : Witgen.U64Expr (F circomPrime)) : Witgen.U64Expr (F circomPrime) :=
+  (len + 72) / 64 * 64
+
+/-- `specPaddedByteConst` as a witness-IR ℕ expression: the three nested `if`s
+translate branch for branch. `j < totalLen - 8` becomes `j + 8 < totalLen` (valid
+because `totalLen ≥ 64`), and the only remaining subtraction, the length-field byte
+offset `totalLen - 1 - j`, is an `nsub` whose side conditions hold in the branch that
+takes it (`j < totalLen ≤ j + 8`). -/
+def specPaddedByteConstIR (len j : Witgen.U64Expr (F circomPrime)) : Witgen.U64Expr (F circomPrime) :=
+  .ite (j =? len) 128 <|
+    .ite (j + 8 <? totalLenIR len) 0 <|
+      .ite (j <? totalLenIR len)
+        (((len * 8) >>> (8 * nsub (totalLenIR len) (j + 1))) % 256)
+        0
+
+/-- `specPaddedByte` as a witness-IR ℕ expression: the message read is a `listGet`
+at the computed byte index, guarded by the same two conditions as the `dite`. -/
+def specPaddedByteIR (msgVar : Var (fields inputBufferLen) (F circomPrime))
+    (len j : Witgen.U64Expr (F circomPrime)) : Witgen.U64Expr (F circomPrime) :=
+  .ite ((j <? len) &&& (j <? (256 : Witgen.U64Expr (F circomPrime))))
+    msgVar[j].val
+    (specPaddedByteConstIR len j)
+
+/-- The padded byte index holding flat bit `i` (`nsub` for the big-endian
+byte-in-word flip `3 - i % 32 / 8`, which is always in range). -/
+def byteIdxIR (i : Witgen.U64Expr (F circomPrime)) : Witgen.U64Expr (F circomPrime) :=
+  i / 512 * 64 + i % 512 / 32 * 4 + nsub 3 (i % 32 / 8)
+
+/-! ### Eval bridges -/
+
+theorem eval_totalLenIR (ctx : Witgen.Ctx (F circomPrime))
+    (len : Witgen.U64Expr (F circomPrime)) (hlen : nval ctx len < 2 ^ 32) :
+    nval ctx (totalLenIR len) = numBlocksForLen (nval ctx len) * 64 := by
+  simp [totalLenIR, circuit_norm, numBlocksForLen_eq, UInt64.toNat_ofNat']
+
+theorem eval_byteIdxIR (ctx : Witgen.Ctx (F circomPrime))
+    (i : Witgen.U64Expr (F circomPrime)) (hi : nval ctx i < 2 ^ 32) :
+    nval ctx (byteIdxIR i)
+      = nval ctx i / 512 * 64 + nval ctx i % 512 / 32 * 4
+          + (3 - nval ctx i % 32 / 8) := by
+  simp only [byteIdxIR, circuit_norm, ofNat_def, nval_add, nval_mul, nval_div, nval_mod,
+    nval_nsub_wrap, nval_const_ofNat, nval_const]
+  omega
+
+theorem totalLen_ge (len : ℕ) : 64 ≤ numBlocksForLen len * 64 := by
+  have : 1 ≤ numBlocksForLen len := by rw [numBlocksForLen_eq]; omega
+  omega
+
+theorem eval_specPaddedByteConstIR (ctx : Witgen.Ctx (F circomPrime))
+    (len j : Witgen.U64Expr (F circomPrime)) (hj : nval ctx j < 320)
+    (hlen : nval ctx len < 2 ^ 32) :
+    nval ctx (specPaddedByteConstIR len j)
+      = specPaddedByteConst (nval ctx len) (nval ctx j) := by
+  have hT := totalLen_ge (nval ctx len)
+  have hTlt : numBlocksForLen (nval ctx len) * 64 < 2 ^ 33 := by
+    rw [numBlocksForLen_eq]; omega
+  have hTot : nval ctx (totalLenIR len) = numBlocksForLen (nval ctx len) * 64 :=
+    eval_totalLenIR ctx len hlen
+  unfold specPaddedByteConstIR specPaddedByteConst
+  simp only [nval_norm, hTot]
+  rw [show (nval ctx j + 8) % 18446744073709551616 = nval ctx j + 8 from by omega]
+  -- branch 1: the `0x80` marker sits exactly at `j = len`
+  by_cases h1 : nval ctx j = nval ctx len
+  · simp only [h1, decide_true, ite_true, if_pos rfl]
+  simp only [h1, decide_false, Bool.false_eq_true, ite_false, if_neg h1]
+  -- branch 2: the zero run, `j + 8 < totalLen`
+  by_cases h2 : nval ctx j + 8 < numBlocksForLen (nval ctx len) * 64
+  · rw [if_pos (by omega : nval ctx j < numBlocksForLen (nval ctx len) * 64 - 8)]
+    simp only [h2, decide_true, ite_true]
+  rw [if_neg (by omega : ¬ nval ctx j < numBlocksForLen (nval ctx len) * 64 - 8)]
+  simp only [h2, decide_false, Bool.false_eq_true, ite_false]
+  -- branch 3: the 8-byte big-endian length field, the one place `nsub` is taken.
+  -- `¬(j + 8 < totalLen)` bounds the shift by `8 · 7 = 56 < 64`, so it is not reduced.
+  by_cases h3 : nval ctx j < numBlocksForLen (nval ctx len) * 64
+  · rw [if_pos h3]
+    simp only [h3, decide_true, ite_true]
+    rw [show (nval ctx len * 8) % 18446744073709551616 = nval ctx len * 8 from by omega,
+      show 8 * ((numBlocksForLen (nval ctx len) * 64
+                + 18446744073709551615 * ((nval ctx j + 1) % 18446744073709551616))
+              % 18446744073709551616) % 18446744073709551616 % 64
+          = 8 * (numBlocksForLen (nval ctx len) * 64 - 1 - nval ctx j) from by omega,
+      Nat.shiftRight_eq_div_pow]
+  rw [if_neg h3]
+  simp only [h3, decide_false, Bool.false_eq_true, ite_false]
+
+theorem eval_specPaddedByteIR (msgVar : Var (fields inputBufferLen) (F circomPrime))
+    (msg : Vector ℕ inputBufferLen) (ctx : Witgen.Ctx (F circomPrime))
+    (hmsg : ∀ k (hk : k < inputBufferLen),
+      msg[k] = ZMod.val (Expression.eval ctx.env.toEnvironment msgVar[k]))
+    (hbyte : ∀ k (hk : k < inputBufferLen), msg[k] < 2 ^ 64)
+    (len j : Witgen.U64Expr (F circomPrime)) (hj : nval ctx j < 320)
+    (hlen : nval ctx len < 2 ^ 32) :
+    nval ctx (specPaddedByteIR msgVar len j)
+      = specPaddedByte msg (nval ctx len) (nval ctx j) := by
+  unfold specPaddedByteIR specPaddedByte
+  by_cases hc : nval ctx j < nval ctx len ∧ nval ctx j < inputBufferLen
+  · rw [dif_pos hc]
+    rw [show nval ctx
+        (Witgen.U64Expr.ite ((j <? len) &&& (j <? (256 : Witgen.U64Expr (F circomPrime))))
+          msgVar[j].val (specPaddedByteConstIR len j))
+        = nval ctx msgVar[j].val from by
+      simp only [nval_norm, hc.1, decide_true, Bool.true_and,
+        show nval ctx j < 256 from by simpa [inputBufferLen] using hc.2, ite_true]]
+    -- the message read is a `listGet` at an in-range index, and the byte it returns is
+    -- below `2^64`, so the sort's truncation is the identity
+    simp only [nval_norm, circuit_norm]
+    rw [dif_pos hc.2, ← hmsg _ hc.2]
+    exact Nat.mod_eq_of_lt (by simpa using hbyte _ hc.2)
+  · rw [dif_neg hc]
+    rw [show nval ctx
+        (Witgen.U64Expr.ite ((j <? len) &&& (j <? (256 : Witgen.U64Expr (F circomPrime))))
+          msgVar[j].val (specPaddedByteConstIR len j))
+        = nval ctx (specPaddedByteConstIR len j) from by
+      simp only [nval_norm]
+      rw [if_neg (by simpa [inputBufferLen, not_and, not_lt] using hc)]]
+    exact eval_specPaddedByteConstIR ctx len j hj hlen
+
+/-! ### The top-level padded-bits witness program
+
+The other top-level witness, the one-hot length flags, is a single `.range` body over
+one equality test and is written inline in `main`. -/
+
+/-- Witness program for the 2560 padded message bits: one `.range` body over the flat
+bit index, reading bit `i % 8` of the expected padded byte at `byteIdxIR i`. -/
+def paddedBitsIR (input : Var Input (F circomPrime)) :
+    Witgen.VExpr (F circomPrime) paddedBitsLen :=
+  .range paddedBitsLen fun i =>
+    (((specPaddedByteIR input.message input.messageLen.val (byteIdxIR i)) >>> (i % 8)) % 2).toField
+
+/-- `paddedBitsIR` computes exactly `paddedBitsValue` on the message bytes read out
+of the symbolic message vector. The two bounds are what the u64 sort needs: the
+message bytes and the length have to fit in the sort for its arithmetic to be the
+honest arithmetic. Both hold for every input the circuit assumes. -/
+theorem getElem_eval_paddedBitsIR (input : Var Input (F circomPrime))
+    (msg : Vector ℕ inputBufferLen) (env : ProverEnvironment (F circomPrime))
+    (hmsg : ∀ k (hk : k < inputBufferLen),
+      msg[k] = ZMod.val (Expression.eval env.toEnvironment input.message[k]))
+    (hbyte : ∀ k (hk : k < inputBufferLen), msg[k] < 2 ^ 64)
+    (hlen : ZMod.val (Expression.eval env.toEnvironment input.messageLen) < 2 ^ 32)
+    (i : ℕ) (hi : i < paddedBitsLen) :
+    ((paddedBitsIR input).eval { env })[i]
+      = (paddedBitsValue msg
+          (ZMod.val (Expression.eval env.toEnvironment input.messageLen)))[i] := by
+  simp only [paddedBitsLen, paddedBlocksLen] at hi
+  rw [paddedBitsIR, Witgen.VExpr.range_def, Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi,
+    paddedBitsValue, Vector.getElem_ofFn]
+  have hb : nval { env := env, locals := #[], idx := i }
+      (byteIdxIR Witgen.U64Expr.idx)
+      = i / 512 * 64 + i % 512 / 32 * 4 + (3 - i % 32 / 8) := by
+    rw [eval_byteIdxIR _ _ (by simp only [nval_norm]; omega)]
+    simp only [nval_norm]
+    omega
+  have hblt : nval { env := env, locals := #[], idx := i }
+      (byteIdxIR Witgen.U64Expr.idx) < 320 := by rw [hb]; omega
+  have hlen' : nval { env := env, locals := #[], idx := i } input.messageLen.val < 2 ^ 32 := by
+    simp only [nval_norm, Witgen.FExpr.eval, FiniteField.val_F]
+    omega
+  rw [show Witgen.FExpr.eval { env := env, locals := #[], idx := i }
+      ((((specPaddedByteIR input.message input.messageLen.val (byteIdxIR Witgen.U64Expr.idx))
+        >>> (Witgen.U64Expr.idx % 8)) % 2).toField)
+      = ((((nval { env := env, locals := #[], idx := i }
+          (specPaddedByteIR input.message input.messageLen.val (byteIdxIR Witgen.U64Expr.idx)))
+          >>> (i % 8)) % 2 : ℕ) : F circomPrime) from by
+    simp only [circuit_norm, nval_norm]]
+  rw [eval_specPaddedByteIR input.message msg _ hmsg hbyte _ _ hblt hlen', hb,
+    -- the length read back through the sort is the length itself
+    show nval { env := env, locals := #[], idx := i } input.messageLen.val
+        = ZMod.val (Expression.eval env.toEnvironment input.messageLen) from by
+      simp only [nval_norm, Witgen.FExpr.eval, FiniteField.val_F]
+      omega,
+    Nat.shiftRight_eq_div_pow]
+
+/-- The value bridge at the level of `paddedBitsWitness`. The two bounds are the same
+ones `getElem_eval_paddedBitsIR` needs: a byte and a length that fit in the u64 sort.
+`completeness` gets both from the circuit's assumptions. -/
+theorem getElem_eval_paddedBitsWitness (input : Var Input (F circomPrime))
+    (env : ProverEnvironment (F circomPrime))
+    (hbyte : ∀ k (hk : k < inputBufferLen),
+      ZMod.val (Expression.eval env.toEnvironment input.message[k]) < 2 ^ 64)
+    (hlen : ZMod.val (Expression.eval env.toEnvironment input.messageLen) < 2 ^ 32)
+    (i : ℕ) (hi : i < paddedBitsLen) :
+    ((paddedBitsIR input).eval { env })[i] = (paddedBitsWitness input env)[i] := by
+  rw [paddedBitsWitness]
+  have hmsg : ∀ k (hk : k < inputBufferLen),
+      ((eval env input.message).map ZMod.val)[k]
+        = ZMod.val (Expression.eval env.toEnvironment input.message[k]) := by
+    intro k hk
+    rw [Vector.getElem_map,
+      show eval env input.message
+          = Vector.map (Expression.eval env.toEnvironment) input.message from
+        CircuitType.eval_var_fields_prover .., Vector.getElem_map]
+  refine getElem_eval_paddedBitsIR input _ env hmsg (fun k hk => ?_) hlen i hi
+  rw [hmsg k hk]; exact hbyte k hk
+
+/-- Vector-level value bridge, for `completeness`. -/
+theorem eval_paddedBitsIR_eq (input : Var Input (F circomPrime))
+    (env : ProverEnvironment (F circomPrime))
+    (hbyte : ∀ k (hk : k < inputBufferLen),
+      ZMod.val (Expression.eval env.toEnvironment input.message[k]) < 2 ^ 64)
+    (hlen : ZMod.val (Expression.eval env.toEnvironment input.messageLen) < 2 ^ 32) :
+    (paddedBitsIR input).eval { env } = paddedBitsWitness input env :=
+  Vector.ext fun i hi => getElem_eval_paddedBitsWitness input env hbyte hlen i hi
+
+/-! ### Congruence bridges, for the `computableWitness` obligation
+
+The value bridges above are conditional: the u64 sort only agrees with the ℕ padding
+spec when the bytes and the length fit in it. `computableWitnesses` has no assumptions
+to draw such a bound from — and does not need one, because what it has to show is only
+that the generator *reads nothing but the input*. These lemmas say exactly that, one
+per program, and each is proved by normalising both sides with the same `nval_norm`
+set and rewriting the two leaves. -/
+
+/-- Reading a list of embedded circuit expressions at a computed index depends on the
+environment only through those expressions. -/
+theorem evalList_expr_congr (l : List (Expression (F circomPrime)))
+    (ctx ctx' : Witgen.Ctx (F circomPrime))
+    (h : ∀ x ∈ l, Expression.eval ctx.env.toEnvironment x
+      = Expression.eval ctx'.env.toEnvironment x) (k : ℕ) :
+    Witgen.FExpr.evalList ctx k (l.map Witgen.FExpr.expr)
+      = Witgen.FExpr.evalList ctx' k (l.map Witgen.FExpr.expr) := by
+  induction l generalizing k with
+  | nil => rfl
+  | cons a l ih =>
+    cases k with
+    | zero => exact h a (by simp)
+    | succ k => exact ih (fun x hx => h x (by simp [hx])) k
+
+theorem nval_byteIdxIR_congr (ctx ctx' : Witgen.Ctx (F circomPrime))
+    (i : Witgen.U64Expr (F circomPrime)) (hi : nval ctx i = nval ctx' i) :
+    nval ctx (byteIdxIR i) = nval ctx' (byteIdxIR i) := by
+  simp only [byteIdxIR, nval_norm, hi]
+
+theorem nval_specPaddedByteConstIR_congr (ctx ctx' : Witgen.Ctx (F circomPrime))
+    (len j : Witgen.U64Expr (F circomPrime))
+    (hlen : nval ctx len = nval ctx' len) (hj : nval ctx j = nval ctx' j) :
+    nval ctx (specPaddedByteConstIR len j)
+      = nval ctx' (specPaddedByteConstIR len j) := by
+  simp only [specPaddedByteConstIR, totalLenIR, nval_norm, hlen, hj]
+
+theorem nval_specPaddedByteIR_congr (msgVar : Var (fields inputBufferLen) (F circomPrime))
+    (ctx ctx' : Witgen.Ctx (F circomPrime)) (len j : Witgen.U64Expr (F circomPrime))
+    (hmsg : ∀ x ∈ msgVar.toList, Expression.eval ctx.env.toEnvironment x
+      = Expression.eval ctx'.env.toEnvironment x)
+    (hlen : nval ctx len = nval ctx' len) (hj : nval ctx j = nval ctx' j) :
+    nval ctx (specPaddedByteIR msgVar len j)
+      = nval ctx' (specPaddedByteIR msgVar len j) := by
+  have hread : Witgen.FExpr.eval ctx msgVar[j] = Witgen.FExpr.eval ctx' msgVar[j] := by
+    show Witgen.FExpr.evalList ctx (nval ctx j) (msgVar.toList.map Witgen.FExpr.expr)
+        = Witgen.FExpr.evalList ctx' (nval ctx' j) (msgVar.toList.map Witgen.FExpr.expr)
+    rw [hj]
+    exact evalList_expr_congr msgVar.toList ctx ctx' hmsg _
+  simp only [specPaddedByteIR, nval_norm, hlen, hj, hread,
+    nval_specPaddedByteConstIR_congr ctx ctx' len j hlen hj]
+
+/-- The witness vector reads the environment only at the message cells and the length.
+This is what `computableWitnesses` needs; it holds for every environment, with no bound
+on either. -/
+theorem eval_paddedBitsIR_congr (input : Var Input (F circomPrime))
+    (env env' : ProverEnvironment (F circomPrime))
+    (hmsg : ∀ x ∈ input.message.toList, Expression.eval env.toEnvironment x
+      = Expression.eval env'.toEnvironment x)
+    (hlen : Expression.eval env.toEnvironment input.messageLen
+      = Expression.eval env'.toEnvironment input.messageLen) :
+    (paddedBitsIR input).eval { env := env }
+      = (paddedBitsIR input).eval { env := env' } := by
+  refine Vector.ext fun i hi => ?_
+  rw [paddedBitsIR, Witgen.VExpr.range_def,
+    Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi,
+    Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi]
+  have hlen' : nval { env := env, locals := #[], idx := i } input.messageLen.val
+      = nval { env := env', locals := #[], idx := i } input.messageLen.val := by
+    simp only [nval_norm, Witgen.FExpr.eval, hlen]
+  have hj : nval { env := env, locals := #[], idx := i } (byteIdxIR Witgen.U64Expr.idx)
+      = nval { env := env', locals := #[], idx := i } (byteIdxIR Witgen.U64Expr.idx) :=
+    nval_byteIdxIR_congr _ _ _ (by simp only [nval_norm])
+  simp only [circuit_norm, nval_norm,
+    nval_specPaddedByteIR_congr input.message _ _ _ _ hmsg hlen' hj]
+
+end WitgenIR
 
 /-! ## Local helpers (re-proving private SHA256Rounds helpers) -/
 
@@ -235,7 +555,7 @@ lemma paddedBlock_varFromOffset_eval_eq_of_agreesBelow
         ).get ⟨b.val * 16 * 32 + w * 32 + bit, hidx⟩ =
         (var { index := offset + (b.val * 16 * 32 + w * 32 + bit) } :
           Expression (F circomPrime)) := by
-    simpa only using
+    exact
       (Vector.getElem_mapRange
         (create := fun i => (var { index := offset + i } : Expression (F circomPrime)))
         (b.val * 16 * 32 + w * 32 + bit) hidx)
@@ -266,5 +586,12 @@ lemma digest_final
   rw [hkv] at this
   rw [← this, Vector.getElem_map]
   congr 2
+
+/-- The output of a `subcircuit` call is the child circuit's own output.
+Definitional, but 4.32's `simp` no longer unfolds `subcircuit` on its own, so the
+top-level `computableWitness` proof rewrites with this instead. -/
+theorem subcircuit_output_eq {β α : TypeMap} [ProvableType β] [ProvableType α]
+    (c : FormalCircuit (F circomPrime) β α) (b : Var β (F circomPrime)) (n : ℕ) :
+    (subcircuit c b).output n = c.output b n := rfl
 
 end Solution.SHA256

@@ -1,4 +1,5 @@
 import Solution.Blake3CompressGF2Canonical.Witness
+import Challenge.Utils.WitgenIR
 
 /-!
 # BLAKE3 canonical reference entrypoint
@@ -24,10 +25,25 @@ theorem mainCost :
 theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main :=
   isR1CS_CidentityInternal
 
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main :=
+  witgenIsIRInternal
+
 theorem computableWitness : ∀ n input,
     ProverEnvironment.OnlyAccessedBelow n
       (fun env : ProverEnvironment (F p2) => eval env input) →
     Circuit.ComputableWitnesses (main input) n :=
   computableWitnessInternal
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.Blake3CompressGF2Canonical

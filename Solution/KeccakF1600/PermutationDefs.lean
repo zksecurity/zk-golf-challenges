@@ -85,14 +85,13 @@ instance elaborated : ElaboratedCircuit (F circomPrime) KeccakBitState KeccakBit
   elaborate_circuit_with {
     output _ i0 := stateVar i0 23
   } using by
-    refine ⟨?_, ?_, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_⟩
     · intro a; simp only [circuit_norm]
     · intro a n
       simp only [Fin.foldl_succ_last, circuit_norm, stateVar, Fin.val_last,
         Vector.mapRange_eq_mapFinRange]
       congr 1
-    · simp only [circuit_norm]
-    · simp only [circuit_norm]
+    · intro a ha; exact ha
 
 /-- The round-value fold (with `rcN`), bridging to the trusted `keccakF 6`. -/
 def vfold (X : Vector ℕ 25) (k : ℕ) : Vector ℕ 25 :=

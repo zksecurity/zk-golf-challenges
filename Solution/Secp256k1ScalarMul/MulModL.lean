@@ -25,14 +25,20 @@ structure Inputs (F : Type) where
   b : Emu F
 deriving ProvableStruct
 
+/-! ## Witness-IR programs
+
+The quotient and the remainder of `a.value · b.value` by `P256`, from `MulMod`'s digit
+registers with the modulus specialized to the constant `pConst`. -/
+
 def main (input : Var Inputs (F circomPrime)) :
     Circuit (F circomPrime) (Var Emu (F circomPrime)) := do
-  let { a, b } := input
+  let a := input.a
+  let b := input.b
 
-  let q ← ProvableType.witness (α := Emu) fun env =>
-    emuOfNat (evalEmu env a * evalEmu env b / P256)
-  let r ← ProvableType.witness (α := Emu) fun env =>
-    emuOfNat (evalEmu env a * evalEmu env b % P256)
+  -- both generators are `MulMod`'s quotient/remainder registers with the modulus
+  -- specialized to the constant `pConst`
+  let q ← witnessVectorProgram numLimbs (MulMod.qWitness secpParams.B a b pConst)
+  let r ← witnessVectorProgram numLimbs (MulMod.rWitness secpParams.B a b pConst)
 
   Normalize.circuit secpParams q
   Normalize.circuit secpParams r
@@ -179,20 +185,35 @@ def circuit : FormalCircuit (F circomPrime) Inputs Emu where
       rw [evalEmu, BigInt.value, ← h_input.2]
     have hpv : BigInt.value secpParams.B (Vector.map (Expression.eval env.toEnvironment) pConst) = P256 :=
       pConst_value env.toEnvironment
+    -- the side conditions of `MulMod`'s two register bridges
+    have hna : BigInt.Normalized secpParams.B
+        (input_var_a.map (Expression.eval env.toEnvironment)) := by
+      rw [h_input.1]; exact ha_valid.1
+    have hnb : BigInt.Normalized secpParams.B
+        (input_var_b.map (Expression.eval env.toEnvironment)) := by
+      rw [h_input.2]; exact hb_norm
+    have hnn : BigInt.Normalized secpParams.B
+        (pConst.map (Expression.eval env.toEnvironment)) := pConst_normalized env.toEnvironment
+    have hnpos : 0 < BigInt.value secpParams.B
+        (pConst.map (Expression.eval env.toEnvironment)) := by rw [hpv]; decide
     have hqwit : ∀ i : Fin numLimbs, env.toEnvironment.get (i₀ + i.val)
         = ((BigInt.value secpParams.B input_a * BigInt.value secpParams.B input_b
             / BigInt.value secpParams.B (Vector.map (Expression.eval env.toEnvironment) pConst)
             / 2 ^ (secpParams.B * i.val) % 2 ^ secpParams.B : ℕ) : F circomPrime) := by
       intro i
-      rw [hq_env i, emuOfNat_getElem _ i.val i.isLt, heva, hevb, hpv]
-      rfl
+      have hq := hq_env i
+      rw [MulMod.getElem_eval_qWitness secpParams _ _ _ env i.val i.isLt hna hnb hnn hnpos,
+        h_input.1, h_input.2] at hq
+      exact hq
     have hrwit : ∀ i : Fin numLimbs, env.toEnvironment.get (i₀ + numLimbs + i.val)
         = ((BigInt.value secpParams.B input_a * BigInt.value secpParams.B input_b
             % BigInt.value secpParams.B (Vector.map (Expression.eval env.toEnvironment) pConst)
             / 2 ^ (secpParams.B * i.val) % 2 ^ secpParams.B : ℕ) : F circomPrime) := by
       intro i
-      rw [hr_env i, emuOfNat_getElem _ i.val i.isLt, heva, hevb, hpv]
-      rfl
+      have hr := hr_env i
+      rw [MulMod.getElem_eval_rWitness secpParams _ _ _ env i.val i.isLt hna hnb hnn hnpos,
+        h_input.1, h_input.2] at hr
+      exact hr
     have h_input' : (Vector.map (Expression.eval env.toEnvironment) input_var_a,
         Vector.map (Expression.eval env.toEnvironment) input_var_b,
         Vector.map (Expression.eval env.toEnvironment) pConst)

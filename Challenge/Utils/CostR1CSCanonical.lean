@@ -23,7 +23,7 @@ namespace Challenge.CostR1CS
 -- The Spec seals its predicates; this file's definitional lemmas need them open.
 attribute [local semireducible] isCidentityRowAt flatOperationsIsCid
 
-variable {F : Type} [Field F] {α β : Type}
+variable {F : Type} [FiniteField F] {α β : Type}
 
 /-- The constant-one expression is affine (the `B` of a canonical copy/sum row). -/
 theorem Affine.one : Affine (1 : Expression F) := Affine.const 1
@@ -241,8 +241,21 @@ theorem CostIs.constraints {c : Circuit F α} {K : Count} (h : CostIs c K) (n : 
 theorem IsCidCirc.pure (a : α) : IsCidCirc (pure a : Circuit F α) :=
   IsCidCirc.of_ops fun n => by rw [Circuit.pure_operations_eq]; trivial
 
-theorem IsCidCirc.witnessVector (m : ℕ) (c : ProverEnvironment F → Vector F m) :
-    IsCidCirc (Circuit.witnessVector m c) :=
+theorem IsCidCirc.witnessVector (m : ℕ) (out : Witgen.VExpr F m) :
+    IsCidCirc (Circuit.witnessVector m out) :=
+  IsCidCirc.of_ops fun n => by trivial
+
+theorem IsCidCirc.witnessVectorNative (m : ℕ) (c : ProverEnvironment F → Vector F m) :
+    IsCidCirc (witnessVectorNative m c) :=
+  IsCidCirc.of_ops fun n => by trivial
+
+theorem IsCidCirc.witnessIR (M : TypeMap) [ProvableType M] (ir : WitgenIR F (size M)) :
+    IsCidCirc (witnessIR M ir) :=
+  IsCidCirc.of_ops fun n => by trivial
+
+theorem IsCidCirc.witnessNative {M : TypeMap} [ProvableType M]
+    (c : ProverEnvironment F → M F) :
+    IsCidCirc (witnessNative (var := Var M) c) :=
   IsCidCirc.of_ops fun n => by trivial
 
 /-- `pure` with the pin counter and the offset decoupled (they differ mid-block;
@@ -252,8 +265,24 @@ theorem operationsIsCid_pure (a : α) (k n : ℕ) :
   rw [Circuit.pure_operations_eq]; trivial
 
 /-- `witnessVector` with pin counter and offset decoupled. -/
-theorem operationsIsCid_witnessVector (m : ℕ) (c : ProverEnvironment F → Vector F m)
-    (k n : ℕ) : operationsIsCid k ((Circuit.witnessVector m c).operations n) := by
+theorem operationsIsCid_witnessVector (m : ℕ) (out : Witgen.VExpr F m)
+    (k n : ℕ) : operationsIsCid k ((Circuit.witnessVector m out).operations n) := by
+  trivial
+
+/-- Same, for the closure-computed (`native`) vector witness. -/
+theorem operationsIsCid_witnessVectorNative (m : ℕ) (c : ProverEnvironment F → Vector F m)
+    (k n : ℕ) : operationsIsCid k ((witnessVectorNative m c).operations n) := by
+  trivial
+
+/-- Same, for a raw witness-IR allocation of a provable value. -/
+theorem operationsIsCid_witnessIR (M : TypeMap) [ProvableType M] (ir : WitgenIR F (size M))
+    (k n : ℕ) : operationsIsCid k ((witnessIR M ir).operations n) := by
+  trivial
+
+/-- Same, for a closure-computed witness of a provable value. -/
+theorem operationsIsCid_witnessNative {M : TypeMap} [ProvableType M]
+    (c : ProverEnvironment F → M F)
+    (k n : ℕ) : operationsIsCid k ((witnessNative (var := Var M) c).operations n) := by
   trivial
 
 theorem IsCidCirc.bind {f : Circuit F α} {g : α → Circuit F β}

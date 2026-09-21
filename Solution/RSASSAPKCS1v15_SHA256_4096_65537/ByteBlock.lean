@@ -67,7 +67,7 @@ def Spec (input : Inputs (F circomPrime)) : Prop :=
 /-- A field element with `.val < 2` is a root of `x · (x − 1)` (the booleanity
 constraint), used to discharge the booleanity loop in completeness. -/
 private theorem mulSubOne_eq_zero_of_val_lt_two (x : F circomPrime) (h : x.val < 2) :
-    x * (x + -1) = 0 := by
+    x * (x - 1) = 0 := by
   have hcase : x = 0 ∨ x = 1 := by
     rcases (show x.val = 0 ∨ x.val = 1 by omega) with h0 | h1
     · exact Or.inl ((ZMod.val_eq_zero x).mp h0)
@@ -98,7 +98,7 @@ theorem soundness : FormalAssertion.Soundness (F circomPrime) main Assumptions S
         - byteFromBits input_var_bits (digestBitIndex dj 0)) = 0 := by
     intro dj hdj
     have hd := h_dig_holds ⟨dj, hdj⟩
-    rw [Vector.getElem_ofFn] at hd
+    simp only [circuit_norm, digestBitIndex, Nat.add_zero]
     exact hd
   have hdig : BytesLemmas.DigestConsistent env input_var_bytes input_var_bits :=
     digestConsistent_of_facts env input_var_bytes input_var_bits hbool hz
@@ -154,7 +154,7 @@ theorem completeness : FormalAssertion.Completeness (F circomPrime) main Assumpt
           simp [digestBitIndex])]
     intro i
     have hi32 : i.val < 32 := i.isLt
-    rw [Vector.getElem_ofFn, eval_sub, sub_eq_zero]
+    rw [sub_eq_zero]
     -- both sides are `< 256 < circomPrime`, so equal `.val` gives equality.
     apply ZMod.val_injective
     have hbase : 8 * (31 - i.val) + 8 ≤ 256 := by omega

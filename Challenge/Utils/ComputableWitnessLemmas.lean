@@ -9,7 +9,7 @@ specific to the gadget, while the loop/subcircuit bookkeeping lives here.
 
 namespace Challenge.Utils.ComputableWitnessLemmas
 
-variable {F : Type} [Field F]
+variable {F : Type} [FiniteField F]
 
 namespace Condition
 
@@ -69,7 +69,7 @@ namespace FormalCircuitBase
 def computableWitnessCondition {Input : TypeMap} [CircuitType Input]
     (input : Var Input F) (env env' : ProverEnvironment F) : Condition F where
   witness n _ compute :=
-    env.AgreesBelow n env' → eval env input = eval env' input → compute env = compute env'
+    env.AgreesBelow n env' → eval env input = eval env' input → compute.eval env = compute.eval env'
 
 namespace FlatOperation
 
@@ -87,7 +87,7 @@ def StructuralComputableWitnesses {Input : TypeMap} [CircuitType Input]
   | [] => True
   | .witness m compute :: ops =>
       (env.AgreesBelow offset env' → eval env input = eval env' input →
-        compute env = compute env') ∧
+        compute.eval env = compute.eval env') ∧
       StructuralComputableWitnesses input env env' (m + offset) ops
   | .assert _ :: ops =>
       StructuralComputableWitnesses input env env' offset ops
@@ -150,7 +150,7 @@ subcircuits as subgoals instead of flattening them immediately.
 def structuralComputableWitnessCondition {Input : TypeMap} [CircuitType Input]
     (input : Var Input F) (env env' : ProverEnvironment F) : Condition F where
   witness n _ compute :=
-    env.AgreesBelow n env' → eval env input = eval env' input → compute env = compute env'
+    env.AgreesBelow n env' → eval env input = eval env' input → compute.eval env = compute.eval env'
   subcircuit n _ s :=
     FlatOperation.StructuralComputableWitnesses input env env' n s.ops.toFlat
 
@@ -168,7 +168,7 @@ def StructuralComputableWitnesses {Input : TypeMap} [CircuitType Input]
   | [] => True
   | .witness m compute :: ops =>
       (env.AgreesBelow offset env' → eval env input = eval env' input →
-        compute env = compute env') ∧
+        compute.eval env = compute.eval env') ∧
       StructuralComputableWitnesses input env env' (m + offset) ops
   | .assert _ :: ops =>
       StructuralComputableWitnesses input env env' offset ops
@@ -298,7 +298,8 @@ theorem computableWitnesses_forAllFlat {Input Output : TypeMap}
   intro env env'
   change (circuit.main input).operations n |>.forAllFlat n
     { witness := fun n _ compute =>
-        env.AgreesBelow n env' → eval env input = eval env' input → compute env = compute env' }
+        env.AgreesBelow n env' → eval env input = eval env' input →
+          compute.eval env = compute.eval env' }
   exact hcircuit n input env env'
 
 theorem compose_computableWitnesses_of_eq {Parent Input Output : TypeMap}
@@ -389,28 +390,67 @@ theorem pure_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType In
     (env env' : ProverEnvironment F) :
     FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
         ((pure x : Circuit F α).operations n) ↔ True := by
+  simp [circuit_norm, FormalCircuitBase.Operations.StructuralComputableWitnesses]
+
+/--
+Peeling lemma for a bare `witness` operation.
+
+Witness generators are deep-embedded witness-IR programs (`Witgen.WitgenIR`), so the
+obligation is that the *evaluated* program agrees on both environments.
+-/
+theorem singleWitness_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType Input]
+    {m n : ℕ} (parentInput : Var Input F) (ir : WitgenIR F m)
+    (env env' : ProverEnvironment F) :
+    FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
+        [.witness m ir] ↔
+      (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
+        ir.eval env = ir.eval env') := by
   simp [FormalCircuitBase.Operations.StructuralComputableWitnesses]
 
 @[circuit_norm]
 theorem witnessVector_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType Input]
     {m n : ℕ} (parentInput : Var Input F)
+    (out : Witgen.VExpr F m) (env env' : ProverEnvironment F) :
+    FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
+        ((Circuit.witnessVector m out).operations n) ↔
+      (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
+        out.eval { env := env } = out.eval { env := env' }) := by
+  unfold Circuit.witnessVector
+  simp [FormalCircuitBase.Operations.StructuralComputableWitnesses, Witgen.WitgenIR.eval,
+    Witgen.evalSteps]
+
+@[circuit_norm]
+theorem witnessVectorNative_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType Input]
+    {m n : ℕ} (parentInput : Var Input F)
     (compute : ProverEnvironment F → Vector F m) (env env' : ProverEnvironment F) :
     FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
-        ((Circuit.witnessVector m compute).operations n) ↔
+        ((witnessVectorNative m compute).operations n) ↔
       (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
         compute env = compute env') := by
-  unfold Circuit.witnessVector
-  simp [FormalCircuitBase.Operations.StructuralComputableWitnesses]
+  unfold witnessVectorNative
+  simp [FormalCircuitBase.Operations.StructuralComputableWitnesses,
+    Witgen.WitgenIR.eval_native_apply]
 
 @[circuit_norm]
 theorem witnessVar_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType Input]
     {n : ℕ} (parentInput : Var Input F)
-    (compute : ProverEnvironment F → F) (env env' : ProverEnvironment F) :
+    (ir : WitgenIR F 1) (env env' : ProverEnvironment F) :
     FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
-        ((Circuit.witnessVar compute).operations n) ↔
+        ((Circuit.witnessVar ir).operations n) ↔
       (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
-        compute env = compute env') := by
+        ir.eval env = ir.eval env') := by
   unfold Circuit.witnessVar
+  simp [FormalCircuitBase.Operations.StructuralComputableWitnesses]
+
+@[circuit_norm]
+theorem witnessIR_structuralComputableWitnesses_iff {Input M : TypeMap}
+    [CircuitType Input] [ProvableType M] {n : ℕ} (parentInput : Var Input F)
+    (ir : WitgenIR F (size M)) (env env' : ProverEnvironment F) :
+    FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
+        ((_root_.witnessIR M ir).operations n) ↔
+      (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
+        ir.eval env = ir.eval env') := by
+  unfold _root_.witnessIR
   simp [FormalCircuitBase.Operations.StructuralComputableWitnesses]
 
 @[circuit_norm]
@@ -441,37 +481,56 @@ theorem bind_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType In
 @[circuit_norm]
 theorem witnessField_structuralComputableWitnesses_iff {Input : TypeMap} [CircuitType Input]
     {n : ℕ} (parentInput : Var Input F)
-    (compute : ProverEnvironment F → F) (env env' : ProverEnvironment F) :
+    (e : Witgen.FExpr F) (env env' : ProverEnvironment F) :
     FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
-        ((Circuit.witnessField compute).operations n) ↔
+        ((Circuit.witnessField e).operations n) ↔
+      (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
+        e.eval { env := env } = e.eval { env := env' }) := by
+  unfold Circuit.witnessField
+  simp [FormalCircuitBase.Operations.StructuralComputableWitnesses,
+    Witgen.WitgenIR.eval, Witgen.WitgenIR.ofFExpr, Witgen.VExpr.eval, Witgen.evalSteps]
+
+/--
+Peeling lemma for a witness generated by an arbitrary Lean closure (`witnessNative`).
+
+This is the successor of the old `ProvableType.witness` lemma: the obligation is still
+that the closure returns the same provable value on both environments.
+-/
+@[circuit_norm high]
+theorem witnessNative_structuralComputableWitnesses_iff {Input Output : TypeMap}
+    [CircuitType Input] [ProvableType Output] {n : ℕ}
+    (parentInput : Var Input F)
+    (compute : ProverEnvironment F → Output F) (env env' : ProverEnvironment F) :
+    FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
+        ((witnessNative (value := Output) (var := Var Output) compute).operations n) ↔
       (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
         compute env = compute env') := by
-  unfold Circuit.witnessField
-  simp only [bind_structuralComputableWitnesses_iff,
-    witnessVar_structuralComputableWitnesses_iff,
-    pure_structuralComputableWitnesses_iff, and_true]
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
+      [.witness (size Output) (.nativeValue compute)] ↔ _
+  rw [singleWitness_structuralComputableWitnesses_iff]
+  simp only [Witgen.WitgenIR.eval_nativeValue]
+  constructor
+  · intro h h_agree h_input
+    rw [ProvableType.ext_iff]
+    intro i hi
+    exact Vector.ext_iff.mp (h h_agree h_input) i hi
+  · intro h h_agree h_input
+    exact congrArg toElements (h h_agree h_input)
 
-@[circuit_norm]
+/--
+Alias of `witnessNative_structuralComputableWitnesses_iff` under the name used before
+the witness-IR migration (witnessing a provable value from a Lean closure used to be
+spelled `ProvableType.witness`).
+-/
 theorem provableWitness_structuralComputableWitnesses_iff {Input Output : TypeMap}
     [CircuitType Input] [ProvableType Output] {n : ℕ}
     (parentInput : Var Input F)
     (compute : ProverEnvironment F → Output F) (env env' : ProverEnvironment F) :
     FormalCircuitBase.Operations.StructuralComputableWitnesses parentInput env env' n
-        ((ProvableType.witness (α := Output) compute).operations n) ↔
+        ((witnessNative (value := Output) (var := Var Output) compute).operations n) ↔
       (env.AgreesBelow n env' → eval env parentInput = eval env' parentInput →
-        compute env = compute env') := by
-  unfold ProvableType.witness
-  simp only [FormalCircuitBase.Operations.StructuralComputableWitnesses]
-  constructor
-  · intro h h_agree h_input
-    rw [ProvableType.ext_iff]
-    intro i hi
-    exact Vector.ext_iff.mp (h.1 h_agree h_input) i hi
-  · intro h
-    constructor
-    · intro h_agree h_input
-      exact congrArg toElements (h h_agree h_input)
-    · trivial
+        compute env = compute env') :=
+  witnessNative_structuralComputableWitnesses_iff parentInput compute env env'
 
 @[circuit_norm]
 theorem forEach_structuralComputableWitnesses_iff {α : Type} {Input : TypeMap} {m n : ℕ}

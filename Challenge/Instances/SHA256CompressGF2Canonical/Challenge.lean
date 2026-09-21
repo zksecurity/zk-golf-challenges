@@ -1,6 +1,7 @@
 import Clean.Circuit
 import Clean.Utils.Tactics.ProvableStructDeriving
 import Challenge.Utils.CostR1CSCanonicalSpec
+import Challenge.Utils.WitgenIR
 import Challenge.Instances.SHA256CompressGF2Canonical.Interface
 import Challenge.Instances.SHA256CompressGF2Canonical.Cost
 
@@ -27,9 +28,14 @@ theorem completeness : GeneralFormalCircuit.Completeness (F p2) main ProverAssum
 theorem mainCost :
     Challenge.CostR1CS.circuitCost main ⟨allocations, constraints⟩ := sorry
 theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main := sorry
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := sorry
 
 theorem computableWitness : ∀ n input,
   ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F p2) => eval env input) →
   Circuit.ComputableWitnesses (main input) n := sorry
+
+theorem requirementsChannelsLawful : ∀ input offset,
+  ((main input).operations offset).RequirementsChannelsLawful
+    elaborated.channelsWithGuarantees [] := sorry
 
 end Solution.SHA256CompressGF2Canonical

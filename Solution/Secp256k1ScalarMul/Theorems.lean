@@ -38,143 +38,66 @@ namespace Solution.Secp256k1ScalarMul
 open Solution.Secp256k1ScalarMul.Limbs
 
 section ComputableWitnessHelpers
+open Challenge.Utils.ComputableWitnessLemmas
+open Utils.Bits
 variable {p : ℕ} [Fact p.Prime] [Fact (p > 2)]
 
 omit [Fact (p > 2)] in
-private theorem assertBoolComputableWitnesses :
-    (assertBool (p := p)).ComputableWitnesses := by
+/-- The Clean library `toBits n hn` circuit has computable witnesses. Its only
+witness is the bit vector, whose witness-IR generator reads just the gadget input;
+the booleanity and recomposition constraints are assertions. -/
+theorem toBitsComputableWitnesses (n : ℕ) (hn : 2 ^ n < p) :
+    (Gadgets.ToBits.toBits (p := p) n hn).ComputableWitnesses := by
   intro offset input env env'
   change Operations.forAllFlat offset
-    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
-    (((assertBool (p := p)).main input).operations offset)
-  apply
-    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-  unfold assertBool
-  simp only [Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
-
-omit [Fact (p > 2)] in
-private theorem equalityComputableWitnesses (M : TypeMap) [ProvableType M] :
-    (Gadgets.Equality.circuit (F := F p) M).ComputableWitnesses := by
-  intro offset input env env'
-  change Operations.forAllFlat offset
-    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
-    (((Gadgets.Equality.circuit (F := F p) M).main input).operations offset)
-  apply
-    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-  unfold Gadgets.Equality.circuit Gadgets.Equality.main
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    ((Gadgets.ToBits.main n input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  unfold Gadgets.ToBits.main
   simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
-  intro _
-  trivial
+    HasAssertEq.assert_eq, Expression.assertEquals,
+    Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.witnessVector_structuralComputableWitnesses_iff,
+    Circuit.forEach_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff,
+    FormalAssertion.assertion_structuralComputableWitnesses_iff,
+    and_true]
+  refine ⟨?_, ?_, ?_⟩
+  · intro _ h_input
+    simp only [circuit_norm] at h_input
+    simp only [circuit_norm, Witgen.VExpr.range_def, Witgen.VExpr.eval, h_input]
+  · intro i
+    rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+    simp only [circuit_norm, FlatOperation.forAll,
+      FormalCircuitBase.computableWitnessCondition, and_true]
+  · rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll,
+      Operations.forAll_toFlat_iff]
+    simp only [Gadgets.Equality.main, Operations.forAllFlat, circuit_norm,
+      FormalCircuitBase.computableWitnessCondition]
 
 omit [Fact (p > 2)] in
+/-- The Clean library range-check assertion `rangeCheck n hn` has computable
+witnesses. Its `main` is `do let _ ← toBits n hn x`, so the only witnesses are
+those of the `toBits` subcircuit. -/
 theorem rangeCheckComputableWitnesses (n : ℕ) (hn : 2 ^ n < p) :
     (Gadgets.ToBits.rangeCheck (p := p) n hn).ComputableWitnesses := by
   intro offset input env env'
   change Operations.forAllFlat offset
-    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
-    (((Gadgets.ToBits.rangeCheck (p := p) n hn).main input).operations offset)
-  apply
-    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+    (FormalCircuitBase.computableWitnessCondition input env env')
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
+  apply FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    (((Gadgets.ToBits.rangeCheck n hn).main input).operations offset)
   unfold Gadgets.ToBits.rangeCheck
-  simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
-    and_true]
-  unfold subcircuitWithAssertion
-  simp only [Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses]
-  constructor
-  · apply Challenge.Utils.ComputableWitnessLemmas.GeneralFormalCircuit.subcircuit_flatStructuralComputableWitnesses
-    · intro _ _ h_input
-      exact h_input
-    · intro offset input env env'
-      change Operations.forAllFlat offset
-        (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
-        (((Gadgets.ToBits.toBits (p := p) n hn).main input).operations offset)
-      apply
-        Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-      unfold Gadgets.ToBits.toBits Gadgets.ToBits.main
-      simp only [
-        Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
-        Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
-        Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
-        Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_structuralComputableWitnesses_iff,
-        Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
-      and_true]
-      and_intros
-      · intro _ h_input
-        rw [CircuitType.eval_expression_prover_to_verifier (M := field),
-          CircuitType.eval_expression_prover_to_verifier (M := field)] at h_input
-        have h_input_expr :
-            Expression.eval env.toEnvironment input = Expression.eval env'.toEnvironment input := by
-          simpa only [CircuitType.eval_var_field] using h_input
-        exact congrArg (Utils.Bits.fieldToBits n) h_input_expr
-      · intro i
-        apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
-        · intro k env env' hk h_agree _
-          rw [CircuitType.eval_expression_prover_to_verifier (M := field),
-            CircuitType.eval_expression_prover_to_verifier (M := field)]
-          rw [show eval env.toEnvironment
-                ((witnessVector n fun env =>
-                    Utils.Bits.fieldToBits n (Expression.eval env.toEnvironment input)).output
-              offset)[i.val] =
-                env.get (offset + i.val) by
-              rw [CircuitType.eval_expression (M := field)]
-              simp [Circuit.witnessVector, Circuit.output,
-                ProvableType.eval, explicit_provable_type, size, Vector.getElem_mapRange,
-                Expression.eval],
-            show eval env'.toEnvironment
-                ((witnessVector n fun env =>
-                    Utils.Bits.fieldToBits n (Expression.eval env.toEnvironment input)).output
-                  offset)[i.val] =
-                env'.get (offset + i.val) by
-              rw [CircuitType.eval_expression (M := field)]
-              simp [Circuit.witnessVector, Circuit.output,
-                ProvableType.eval, explicit_provable_type, size, Vector.getElem_mapRange,
-                Expression.eval]]
-          exact h_agree (offset + i.val) (by
-              have hi : i.val < n := i.isLt
-              have hbase : offset + n ≤ k := by
-                simpa [Circuit.localLength] using hk
-              omega)
-        · exact assertBoolComputableWitnesses
-      · rw [FormalAssertion.toSubcircuit]
-        simp only [Operations.toNested_toFlat]
-        apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
-        · intro k env env' hk h_agree h_input
-          simp only [circuit_norm]
-          apply Prod.ext
-          · rw [CircuitType.eval_expression_prover_to_verifier (M := field),
-              CircuitType.eval_expression_prover_to_verifier (M := field)] at h_input
-            dsimp
-            simpa only [CircuitType.eval_var_field] using h_input
-          · dsimp
-            change Expression.eval env.toEnvironment
-                (Utils.Bits.fieldFromBitsExpr (Vector.mapRange n fun i => var { index := offset + i })) =
-              Expression.eval env'.toEnvironment
-                (Utils.Bits.fieldFromBitsExpr (Vector.mapRange n fun i => var { index := offset + i }))
-            change env.toEnvironment
-                (Utils.Bits.fieldFromBitsExpr (Vector.mapRange n fun i => var { index := offset + i })) =
-              env'.toEnvironment
-                (Utils.Bits.fieldFromBitsExpr (Vector.mapRange n fun i => var { index := offset + i }))
-            rw [Utils.Bits.fieldFromBits_eval, Utils.Bits.fieldFromBits_eval]
-            apply Utils.Bits.fieldFromBits_eq
-            intro i
-            simp [Vector.getElem_map, Vector.getElem_mapRange, Expression.eval]
-            exact h_agree (offset + i.val) (by
-              have hi : i.val < n := i.isLt
-              have hbase : offset + n ≤ k := by
-                have hw :
-                    (witnessVector n fun env =>
-                      Utils.Bits.fieldToBits n (Expression.eval env.toEnvironment input)).localLength
-                      offset = n := by
-                  simp [Circuit.witnessVector, Circuit.localLength, Operations.localLength]
-                omega
-              omega)
-        · exact equalityComputableWitnesses id
-      · trivial
-  · trivial
+  simp only [Circuit.bind_structuralComputableWitnesses_iff,
+    Circuit.pure_structuralComputableWitnesses_iff, and_true]
+  show FormalCircuitBase.Operations.StructuralComputableWitnesses input env env' offset
+    [.subcircuit ((Gadgets.toBits n hn).toSubcircuit offset input)]
+  simp only [FormalCircuitBase.Operations.StructuralComputableWitnesses, and_true]
+  rw [FormalCircuitBase.FlatOperation.structuralComputableWitnesses_iff_forAll]
+  unfold GeneralFormalCircuit.toSubcircuit GeneralFormalCircuit.WithHint.toSubcircuit
+  rw [Operations.toNested_toFlat, Operations.forAll_toFlat_iff]
+  exact toBitsComputableWitnesses n hn offset input env env'
 
 end ComputableWitnessHelpers
 

@@ -50,7 +50,6 @@ theorem toNat_eq_fromBits (v : Vector (F p2) 32) :
   refine Finset.sum_congr rfl fun j _ => ?_
   simp only [Nat.mul_zero, Nat.zero_add]
   rw [Add32.bitAt_eq _ j.val j.isLt, Vector.getElem_map]
-  rfl
 
 /-- The bit values of `v` are boolean. -/
 theorem bits_bool (v : Vector (F p2) 32) :

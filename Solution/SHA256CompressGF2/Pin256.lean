@@ -16,10 +16,14 @@ def b256 {α : Type} (v : Vector α 256) (k : ℕ) : α :=
 
 namespace Pin256
 
-/-- Materialize 256 expression bits as fresh witnesses (affine rows). -/
+/-- Materialize 256 expression bits as fresh witnesses (affine rows).
+
+The witness program is a literal vector of the circuit expressions `b256 v i`, embedded
+into the witness IR through `FExpr.expr`; cell `i` reads back as the evaluation of
+`b256 v i`. -/
 def main (v : Var (fields 256) (F p2)) : Circuit (F p2) (Var (fields 256) (F p2)) := do
-  let w ← witnessVector 256 (fun env => Vector.ofFn fun i : Fin 256 =>
-    (b256 v i.val).eval env)
+  let w ← Circuit.witnessVector 256
+    (.lit <| .ofFn fun i : Fin 256 => Witgen.FExpr.expr (b256 v i.val))
   Circuit.forEach (Vector.finRange 256) (fun i =>
     assertZero (w[i.val]'i.isLt - b256 v i.val))
   return w
@@ -49,7 +53,6 @@ theorem completeness : Completeness (F p2) main Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 256) (fields 256) :=
@@ -76,7 +79,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, b256, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `b256` expression, so it reads only the input
+    simp only [b256, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 

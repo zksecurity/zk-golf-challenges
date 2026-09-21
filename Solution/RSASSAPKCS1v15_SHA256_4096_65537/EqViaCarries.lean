@@ -1,5 +1,6 @@
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Normalize
 import Solution.RSASSAPKCS1v15_SHA256_4096_65537.Equal
+import Solution.RSASSAPKCS1v15_SHA256_4096_65537.WitgenLimbs
 
 /-!
 # RSA big-integer multiplication (gadget G4)
@@ -47,6 +48,218 @@ structure Inputs (m : ℕ) (F : Type) where
   rhs : Coeffs m F
 deriving ProvableStruct
 
+/-! ## Witness program for the carry chain
+
+The carry out of index `k` is a quotient of the *prefix* value through `k`, which no
+single loop body can fold. The program accumulates that prefix sum in one fixed-width
+digit register (`IRLimbs.prefixP`) and reads the carry out of it with the free
+`shiftDigits` window; `OFF + cP − cS` is then an offset addition and a wrapping
+subtraction in the digit layer, both exact because the offset dominates both carries
+(`partial_div_bound`).
+
+`carryN` is that register arithmetic with every truncation spelled out, hence a total
+function of the coefficient *values*: `eval_toIR_carryWitness_congr` therefore needs no
+side condition at all, and `getElem_eval_carryWitness` reads the register back as the
+intended offset carry under the gadget's `Assumptions`.
+-/
+
+section Generator
+open Witgen WitgenNat WitgenBigNat IRLimbs
+
+/-- Width of a coefficient: the `Assumptions` bound `(m+1)·2^(2B)` is below `2^(2B+m+1)`. -/
+def coeffBits (m B : ℕ) : ℕ := 2 * B + m + 1
+
+/-- Width of an offset carry: `2·OFF = (m+1)·2^(B+2)` is below `2^(B+m+3)`. -/
+def carryBits (m B : ℕ) : ℕ := B + m + 3
+
+/-- Digits of a carry register. -/
+def carryLen (m B : ℕ) : ℕ := numChunks (carryBits m B)
+
+/-- Digits of the prefix-sum register. -/
+def prefLen (m B : ℕ) : ℕ :=
+  numChunks (coeffBits m B + B * (2 * m - 1) + (2 * m - 1))
+
+/-- The register arithmetic of one offset carry, every truncation spelled out, hence a
+total function of the coefficient values. -/
+def carryN (B nbits PL CL CB OFF : ℕ) (vP vS : ℕ → ℕ) (k : ℕ) : ℕ :=
+  ((OFF % base ^ CL + prefN B nbits PL vP (k + 1) / 2 ^ (B * (k + 1)) % base ^ CL) % base ^ CL
+      + base ^ CL - prefN B nbits PL vS (k + 1) / 2 ^ (B * (k + 1)) % base ^ CL)
+    % base ^ CL % 2 ^ CB
+
+/-- The offset running carries out of indices `k, k+1, …, k+n-1`. -/
+def carryL (B nbits PL CL CB OFF : ℕ) (Pc Sc : List (Expression (F p))) :
+    ℕ → ℕ → M (F p) (List (FExpr (F p)))
+  | 0, _ => Pure.pure []
+  | n + 1, k => do
+      let aP ← prefixP B nbits PL Pc (k + 1)
+      let aS ← prefixP B nbits PL Sc (k + 1)
+      let t ← addP (constDigits OFF CL) (shiftDigits aP (B * (k + 1)) CL) (uc 0)
+      let d ← subP (resizeDigits t CL) (shiftDigits aS (B * (k + 1)) CL) (uc 0)
+      let rest ← carryL B nbits PL CL CB OFF Pc Sc n (k + 1)
+      Pure.pure (limbF d.1 0 CB :: rest)
+
+theorem computesFL_carryL (B nbits PL CL CB OFF : ℕ) (Pc Sc : List (Expression (F p))) :
+    ∀ (n k : ℕ) {S : Array (Step (F p))},
+      ComputesFL S (carryL B nbits PL CL CB OFF Pc Sc n k)
+        (fun env j => if j < n then
+          ((carryN B nbits PL CL CB OFF (coeffVals Pc env) (coeffVals Sc env) (k + j) : ℕ) : F p)
+          else 0) := by
+  intro n
+  induction n with
+  | zero => intro k S; exact Computes.pure (EvalsFL.nil (by simp))
+  | succ n ih =>
+    intro k S
+    refine Computes.bind (computesBig_prefixP B nbits PL Pc (k + 1)) ?_
+    intro S1 aP _ haP
+    refine Computes.bind (computesBig_prefixP B nbits PL Sc (k + 1)) ?_
+    intro S2 aS hS2 haS
+    have hcP : EvalsBig S2 (shiftDigits aP (B * (k + 1)) CL)
+        (fun env => ofNat (prefN B nbits PL (coeffVals Pc env) (k + 1) / 2 ^ (B * (k + 1))) CL) :=
+      (evalsBig_shiftDigits (haP.mono hS2) (B * (k + 1)) CL).congr fun env => by
+        rw [lval_ofNat_of_lt (prefN_lt B nbits PL _ (k + 1))]
+    have hcS : EvalsBig S2 (shiftDigits aS (B * (k + 1)) CL)
+        (fun env => ofNat (prefN B nbits PL (coeffVals Sc env) (k + 1) / 2 ^ (B * (k + 1))) CL) :=
+      (evalsBig_shiftDigits haS (B * (k + 1)) CL).congr fun env => by
+        rw [lval_ofNat_of_lt (prefN_lt B nbits PL _ (k + 1))]
+    refine Computes.bind (computesBig_addP _ _ (uc 0) (evalsBig_constDigits OFF CL) hcP
+      (EvalsU.uc 0 (by norm_num)) (fun _ => base_pos)) ?_
+    intro S3 t hS3 ht
+    have hT : EvalsBig S3 (resizeDigits t CL)
+        (fun env => ofNat ((OFF % base ^ CL
+          + prefN B nbits PL (coeffVals Pc env) (k + 1) / 2 ^ (B * (k + 1)) % base ^ CL)
+          % base ^ CL) CL) :=
+      (evalsBig_resizeDigits ht CL).congr fun env => by
+        rw [lval_addc, lval_ofNat, lval_ofNat, Nat.add_zero, ofNat_mod]
+    refine Computes.bind (computesBigU_subP _ _ (uc 0) hT (hcS.mono hS3)
+      (EvalsU.uc 0 (by norm_num)) (fun _ => by norm_num)) ?_
+    intro S4 d hS4 hd
+    have hd1 : EvalsBig S4 d.1 (fun env => subb
+        (ofNat ((OFF % base ^ CL
+          + prefN B nbits PL (coeffVals Pc env) (k + 1) / 2 ^ (B * (k + 1)) % base ^ CL)
+          % base ^ CL) CL)
+        (ofNat (prefN B nbits PL (coeffVals Sc env) (k + 1) / 2 ^ (B * (k + 1))) CL) 0) := hd.1
+    refine Computes.bind (ih (k + 1)) ?_
+    intro S5 rest hS5 hrest
+    refine Computes.pure (EvalsFL.cons ?_ (hrest.congr fun env j => ?_))
+    · refine (evalsF_limbF (hd1.mono hS5) 0 CB).congr fun env => ?_
+      rw [if_pos (by omega), pow_zero, Nat.div_one, carryN,
+        lval_subb_mod (bounded_ofNat _ _) (bounded_ofNat _ _) (by simp), length_ofNat,
+        lval_ofNat_of_lt (Nat.mod_lt _ (Nat.pow_pos base_pos)), lval_ofNat, Nat.add_zero]
+    · by_cases hj : j < n
+      · rw [if_pos hj, if_pos (by omega), show k + 1 + j = k + (j + 1) by omega]
+      · rw [if_neg hj, if_neg (by omega)]
+
+/-- The whole carry vector as a witness program. -/
+def carryProg (B nbits PL CL CB OFF n : ℕ) (Pc Sc : List (Expression (F p))) :
+    M (F p) (VExpr (F p) n) := do
+  let outs ← carryL B nbits PL CL CB OFF Pc Sc n 0
+  Pure.pure (.lit (Vector.ofFn fun k : Fin n => outs.getD k.val (.const 0)))
+
+theorem computesV_carryProg (B nbits PL CL CB OFF n : ℕ) (Pc Sc : List (Expression (F p))) :
+    ComputesV #[] (carryProg B nbits PL CL CB OFF n Pc Sc)
+      (fun env => Vector.ofFn fun k : Fin n =>
+        ((carryN B nbits PL CL CB OFF (coeffVals Pc env) (coeffVals Sc env) k.val : ℕ) : F p)) := by
+  refine Computes.bind (computesFL_carryL B nbits PL CL CB OFF Pc Sc n 0) ?_
+  intro S outs _ houts
+  refine Computes.pure ((EvalsV.ofFL houts).congr fun env => ?_)
+  refine Vector.ext fun k hk => ?_
+  simp only [Vector.getElem_ofFn, if_pos hk, Nat.zero_add]
+
+/-- The carry witness program of `main`. -/
+def carryWitness (P : BigIntParams p m) (Pc Sc : Var (Coeffs m) (F p)) :
+    M (F p) (VExpr (F p) (2 * m - 1)) :=
+  carryProg P.B (coeffBits m P.B) (prefLen m P.B) (carryLen m P.B) (carryBits m P.B)
+    (carryOffset (m := m) P.B) (2 * m - 1) Pc.toList Sc.toList
+
+omit [NeZero m] in
+/-- `carryWitness` reads the coefficient sequences only through their limb values. -/
+theorem eval_toIR_carryWitness_congr (P : BigIntParams p m) (Pc Sc : Var (Coeffs m) (F p))
+    {env env' : ProverEnvironment (F p)}
+    (hP : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+      Expression.eval env.toEnvironment (Pc[j]'hj)
+        = Expression.eval env'.toEnvironment (Pc[j]'hj))
+    (hS : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+      Expression.eval env.toEnvironment (Sc[j]'hj)
+        = Expression.eval env'.toEnvironment (Sc[j]'hj)) :
+    (carryWitness P Pc Sc).toIR.eval env = (carryWitness P Pc Sc).toIR.eval env' := by
+  have hcv : ∀ (x : Var (Coeffs m) (F p)),
+      (∀ (j : ℕ) (hj : j < 2 * m - 1), Expression.eval env.toEnvironment (x[j]'hj)
+        = Expression.eval env'.toEnvironment (x[j]'hj)) →
+      coeffVals x.toList env = coeffVals x.toList env' := by
+    intro x hx
+    funext j
+    rw [coeffVals_toList, coeffVals_toList]
+    split
+    · rename_i h; rw [hx j h]
+    · rfl
+  rw [carryWitness, IRLimbs.toIR_eq, Witgen.WitgenIR.eval]
+  show Witgen.VExpr.eval { env := env, locals := _ } _
+    = Witgen.VExpr.eval { env := env', locals := _ } _
+  rw [IRLimbs.eval_program (computesV_carryProg _ _ _ _ _ _ _ _ _) env,
+    IRLimbs.eval_program (computesV_carryProg _ _ _ _ _ _ _ _ _) env',
+    hcv Pc hP, hcv Sc hS]
+
+omit [NeZero m] in
+/-- Bridge for `carryWitness` in the branch that matters: with the coefficients in range
+and both carry magnitudes bounded by the offset (which the `Assumptions` and
+`partial_div_bound` give), the witnessed cell is the offset running carry. -/
+theorem getElem_eval_carryWitness (P : BigIntParams p m) (Pc Sc : Var (Coeffs m) (F p))
+    (env : ProverEnvironment (F p)) (k : ℕ) (hk : k < 2 * m - 1)
+    (hPb : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+      (Expression.eval env.toEnvironment (Pc[j]'hj)).val < (m + 1) * 2 ^ (2 * P.B))
+    (hSb : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+      (Expression.eval env.toEnvironment (Sc[j]'hj)).val < (m + 1) * 2 ^ (2 * P.B))
+    (hPle : evalPartial P.B env Pc k / 2 ^ (P.B * (k + 1)) ≤ carryOffset (m := m) P.B)
+    (hSle : evalPartial P.B env Sc k / 2 ^ (P.B * (k + 1)) ≤ carryOffset (m := m) P.B) :
+    (Witgen.VExpr.eval
+        { env := env,
+          locals := Witgen.evalSteps env (carryWitness P Pc Sc #[]).2.toList }
+        (carryWitness P Pc Sc #[]).1)[k]
+      = ((carryOffset (m := m) P.B + evalPartial P.B env Pc k / 2 ^ (P.B * (k + 1))
+            - evalPartial P.B env Sc k / 2 ^ (P.B * (k + 1)) : ℕ) : F p) := by
+  -- the coefficient values, and their prefix sums, in the shape the library states them
+  have hpart : ∀ (x : Var (Coeffs m) (F p)) (j : ℕ),
+      (∑ i ∈ Finset.range (j + 1), coeffVals x.toList env i * 2 ^ (P.B * i))
+        = evalPartial P.B env x j := by
+    intro x j
+    refine Finset.sum_congr rfl fun i _ => ?_
+    rw [coeffVals_toList]
+  have hcb : ∀ (x : Var (Coeffs m) (F p)),
+      (∀ (j : ℕ) (hj : j < 2 * m - 1),
+        (Expression.eval env.toEnvironment (x[j]'hj)).val < (m + 1) * 2 ^ (2 * P.B)) →
+      ∀ j, j < 2 * m - 1 → coeffVals x.toList env j < 2 ^ coeffBits m P.B := by
+    intro x hx j hj
+    have h1 : (m + 1) * 2 ^ (2 * P.B) < 2 ^ (m + 1) * 2 ^ (2 * P.B) :=
+      Nat.mul_lt_mul_of_lt_of_le Nat.lt_two_pow_self (le_refl _) (Nat.two_pow_pos _)
+    have h2 : (2 : ℕ) ^ (m + 1) * 2 ^ (2 * P.B) = 2 ^ coeffBits m P.B := by
+      rw [← pow_add, coeffBits]; congr 1; omega
+    rw [coeffVals_toList, dif_pos hj]
+    have := hx j hj
+    omega
+  have hOFF2 : 2 * carryOffset (m := m) P.B < 2 ^ carryBits m P.B := by
+    have h1 : 2 * ((m + 1) * 2 ^ (P.B + 1)) = (m + 1) * 2 ^ (P.B + 2) := by ring
+    have h2 : (m + 1) * 2 ^ (P.B + 2) < 2 ^ (m + 1) * 2 ^ (P.B + 2) :=
+      Nat.mul_lt_mul_of_lt_of_le Nat.lt_two_pow_self (le_refl _) (Nat.two_pow_pos _)
+    have h3 : (2 : ℕ) ^ (m + 1) * 2 ^ (P.B + 2) = 2 ^ carryBits m P.B := by
+      rw [← pow_add, carryBits]; congr 1; omega
+    rw [show carryOffset (m := m) P.B = (m + 1) * 2 ^ (P.B + 1) from rfl]
+    omega
+  unfold carryWitness
+  rw [IRLimbs.eval_program (computesV_carryProg _ _ _ _ _ _ _ _ _) env]
+  simp only [Vector.getElem_ofFn]
+  rw [show (carryN P.B (coeffBits m P.B) (prefLen m P.B) (carryLen m P.B) (carryBits m P.B)
+        (carryOffset (m := m) P.B) (coeffVals Pc.toList env) (coeffVals Sc.toList env) k)
+      = carryOffset (m := m) P.B + evalPartial P.B env Pc k / 2 ^ (P.B * (k + 1))
+          - evalPartial P.B env Sc k / 2 ^ (P.B * (k + 1)) from ?_]
+  rw [carryN, prefN_eq P.B (coeffBits m P.B) (prefLen m P.B) (2 * m - 1) _
+      (hcb Pc hPb) (by rw [prefLen]; exact two_pow_le_base_numChunks _) _ (by omega),
+    prefN_eq P.B (coeffBits m P.B) (prefLen m P.B) (2 * m - 1) _
+      (hcb Sc hSb) (by rw [prefLen]; exact two_pow_le_base_numChunks _) _ (by omega),
+    hpart, hpart]
+  exact carry_mod_eq hPle hSle hOFF2 (by rw [carryLen]; exact two_pow_le_base_numChunks _)
+
+end Generator
+
 /-- The `main` circuit of `EqViaCarries`: certify that two coefficient sequences
 `lhs := input.lhs` and `rhs := input.rhs` encode the same natural number in base
 `2^B`.
@@ -67,12 +280,9 @@ def main (P : BigIntParams p m) [Fact (p > 2)] (input : Var (Inputs m) (F p)) :
   let Sc := input.rhs
 
   -- 1. witness the running (offset) carries c[0 .. 2m-2] (carry out of each index).
-  let carry ← witnessVector (2 * m - 1) fun env =>
-    Vector.ofFn fun k : Fin (2 * m - 1) =>
-      -- offset running carry out of index k:
-      --   OFF + (Σ_{j ≤ k} P[j]·2^(B·j) − Σ_{j ≤ k} S[j]·2^(B·j)) / 2^(B*(k+1))
-      ((carryOffset (m := m) P.B + evalPartial P.B env Pc k.val / 2 ^ (P.B * (k.val + 1))
-          - evalPartial P.B env Sc k.val / 2 ^ (P.B * (k.val + 1)) : ℕ) : F p)
+  -- offset running carry out of index k:
+  --   OFF + (Σ_{j ≤ k} P[j]·2^(B·j) − Σ_{j ≤ k} S[j]·2^(B·j)) / 2^(B*(k+1))
+  let carry ← witnessVectorProgram (2 * m - 1) (carryWitness P Pc Sc)
 
   -- 2. range-check each carry to `W` bits (subcircuit call).
   Circuit.forEach carry (fun c => Gadgets.ToBits.rangeCheck P.W P.hW c)
@@ -98,16 +308,28 @@ instance elaborated (P : BigIntParams p m) [Fact (p > 2)] :
   localLength _ := (2 * m - 1) * P.W + (2 * m - 1)
   localLength_eq := by
     intro input offset
-    simp only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp only [main, circuit_norm, Normalize.rangeCheck_localLength]
     split <;> simp +arith [circuit_norm]
   subcircuitsConsistent := by
     intro input offset
-    simp +arith only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp +arith only [main, circuit_norm, Normalize.rangeCheck_localLength]
     split <;> simp +arith [circuit_norm]
   channelsLawful := by
     intro offset
-    simp only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp only [main, circuit_norm, Normalize.rangeCheck_localLength,
+      Normalize.rangeCheck_channelsWithGuarantees]
     split <;> simp +arith [circuit_norm]
+
+omit [NeZero m] in
+/-- Per-field projection of an `eval`-agreement hypothesis on the `Inputs` struct.
+The `Var Inputs` `match` no longer iota-reduces on a struct *variable*, so the
+destructuring has to happen here, once. -/
+lemma eval_inputs_parts {input : Var (Inputs m) (F p)} {env env' : ProverEnvironment (F p)}
+    (h : eval env input = eval env' input) :
+    eval env input.lhs = eval env' input.lhs ∧ eval env input.rhs = eval env' input.rhs := by
+  obtain ⟨lhs, rhs⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h ⊢
+  exact h
 
 /-- Preconditions: both coefficient sequences are bounded by `(m+1)·2^(2B)`. -/
 def Assumptions (B : ℕ) (input : Inputs m (F p)) : Prop :=
@@ -122,6 +344,10 @@ def Spec (B : ℕ) (input : Inputs m (F p)) : Prop :=
 encode the same natural number in base `2^B`. -/
 def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Inputs m) where
     main := main P
+    requirementsChannelsLawful := by
+      intro input offset
+      simp only [main, circuit_norm, Normalize.rangeCheck_channelsWithRequirements]
+      split <;> simp +arith [circuit_norm]
     Assumptions := Assumptions P.B
     Spec := Spec P.B
     soundness := by
@@ -134,8 +360,8 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
       have hM : 0 < 2 * m - 1 := by have := Nat.pos_of_neZero m; omega
       set OFFn := carryOffset (m := m) B with hOFFn
       -- nat-indexed coefficient / carry functions
-      set Pn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input.lhs[k]'h).val else 0 with hPn
-      set Sn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input.rhs[k]'h).val else 0 with hSn
+      set Pn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input_lhs[k]'h).val else 0 with hPn
+      set Sn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input_rhs[k]'h).val else 0 with hSn
       set Cn : ℕ → ℕ := fun k => (env.get (i₀ + k)).val with hCn
       -- bound facts
       have hCn_lt : ∀ k, k < 2 * m - 1 → Cn k < 2 ^ W := by
@@ -180,8 +406,7 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
       simp only [circuit_norm] at h_top
       have hCtop : Cn (2 * m - 1 - 1) = OFFn := by
         have : env.get (i₀ + (2 * m - 1 - 1)) = (OFFn : F p) := by
-          rw [← sub_eq_zero]; rw [show env.get (i₀ + (2 * m - 1 - 1)) - (OFFn : F p)
-            = env.get (i₀ + (2 * m - 1 - 1)) + -(OFFn : F p) by ring]; exact h_top
+          rw [← sub_eq_zero]; exact h_top
         simp only [hCn, this, hOFFn_cast]
       -- per-index nat equation (unified, effective carry-in OFFn at k=0)
       have h_idx : ∀ k, (hk : k < 2 * m - 1) →
@@ -190,21 +415,20 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
         intro k hk
         have hlin := h_lin ⟨k, hk⟩
         -- evaluate symbolic subterms
-        have ha_e : Expression.eval env input_var.lhs[(⟨k, hk⟩ : Fin (2*m-1)).val] = input.lhs[k]'hk := by
-          rw [← h_input]; simp [Vector.getElem_map]
-        have hb_e : Expression.eval env input_var.rhs[(⟨k, hk⟩ : Fin (2*m-1)).val] = input.rhs[k]'hk := by
-          rw [← h_input]; simp [Vector.getElem_map]
+        have ha_e : Expression.eval env input_var_lhs[(⟨k, hk⟩ : Fin (2*m-1)).val] = input_lhs[k]'hk := by
+          rw [← h_input.1]; simp [Vector.getElem_map]
+        have hb_e : Expression.eval env input_var_rhs[(⟨k, hk⟩ : Fin (2*m-1)).val] = input_rhs[k]'hk := by
+          rw [← h_input.2]; simp [Vector.getElem_map]
         have hcin_e : Expression.eval env
             (if h : (⟨k, hk⟩ : Fin (2*m-1)).val = 0 then 0
               else var { index := i₀ + ((⟨k, hk⟩ : Fin (2*m-1)).val - 1) } - Expression.const (OFFn : F p))
             = if k = 0 then 0 else env.get (i₀ + (k - 1)) - (OFFn : F p) := by
-          simp only []
-          split <;> simp [circuit_norm, sub_eq_add_neg]
+          split <;> simp [circuit_norm]
         simp only [ha_e, hb_e, hcin_e] at hlin
         -- the unified field equation
-        have hfield : (input.lhs[k]'hk) + (if k = 0 then (OFFn : F p) else env.get (i₀ + (k - 1)))
+        have hfield : (input_lhs[k]'hk) + (if k = 0 then (OFFn : F p) else env.get (i₀ + (k - 1)))
             + (OFFn : F p) * (2 ^ B : F p)
-            = (input.rhs[k]'hk) + env.get (i₀ + k) * (2 ^ B : F p) + (OFFn : F p) := by
+            = (input_rhs[k]'hk) + env.get (i₀ + k) * (2 ^ B : F p) + (OFFn : F p) := by
           rcases Nat.eq_zero_or_pos k with hk0 | hk0
           · subst hk0
             simp only [↓reduceIte] at hlin ⊢
@@ -228,29 +452,29 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
           split
           · exact hOFFn_le_W
           · rename_i hkne; have := hCn_lt (k - 1) (by omega); omega
-        have hlhs : (input.lhs[k]'hk).val + (if k = 0 then OFFn else Cn (k - 1)) + OFFn * 2 ^ B < p := by
+        have hlhs : (input_lhs[k]'hk).val + (if k = 0 then OFFn else Cn (k - 1)) + OFFn * 2 ^ B < p := by
           have hp1 := hPn_lt k hk
           simp only [hPn, dif_pos hk] at hp1
           omega
-        have hrhs : (input.rhs[k]'hk).val + (env.get (i₀ + k)).val * 2 ^ B + OFFn < p := by
+        have hrhs : (input_rhs[k]'hk).val + (env.get (i₀ + k)).val * 2 ^ B + OFFn < p := by
           have hp2 := hSn_lt k hk
           simp only [hSn, dif_pos hk] at hp2
           have hc : (env.get (i₀ + k)).val < 2 ^ W := h_range ⟨k, hk⟩
           have hcB : (env.get (i₀ + k)).val * 2 ^ B ≤ 2 ^ W * 2 ^ B := by
             apply Nat.mul_le_mul_right; omega
           omega
-        have hlift := per_index_lift (B := B) (input.lhs[k]'hk)
+        have hlift := per_index_lift (B := B) (input_lhs[k]'hk)
           (if k = 0 then (OFFn : F p) else env.get (i₀ + (k - 1)))
-          (input.rhs[k]'hk) (env.get (i₀ + k)) (OFFn : F p)
+          (input_rhs[k]'hk) (env.get (i₀ + k)) (OFFn : F p)
           (if k = 0 then OFFn else Cn (k - 1)) OFFn hpB hcin_val hOFFn_cast hlhs hrhs hfield
         simp only [hPn, hSn, hCn, dif_pos hk] at hlift ⊢
         convert hlift using 2
       -- express polyValue as range sums of Pn / Sn
-      have hpv1 : polyValue B input.lhs = ∑ k ∈ Finset.range (2 * m - 1), Pn k * 2 ^ (B * k) := by
+      have hpv1 : polyValue B input_lhs = ∑ k ∈ Finset.range (2 * m - 1), Pn k * 2 ^ (B * k) := by
         rw [polyValue, ← Fin.sum_univ_eq_sum_range (fun k => Pn k * 2 ^ (B * k))]
         apply Finset.sum_congr rfl
         intro i _; simp only [hPn, dif_pos i.isLt]
-      have hpv2 : polyValue B input.rhs = ∑ k ∈ Finset.range (2 * m - 1), Sn k * 2 ^ (B * k) := by
+      have hpv2 : polyValue B input_rhs = ∑ k ∈ Finset.range (2 * m - 1), Sn k * 2 ^ (B * k) := by
         rw [polyValue, ← Fin.sum_univ_eq_sum_range (fun k => Sn k * 2 ^ (B * k))]
         apply Finset.sum_congr rfl
         intro i _; simp only [hSn, dif_pos i.isLt]
@@ -328,8 +552,8 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
       set OFFn := carryOffset (m := m) B with hOFFn
       have hOFF_eq : OFFn = (m + 1) * 2 ^ (B + 1) := rfl
       -- nat digit functions
-      set Pn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input.lhs[k]'h).val else 0 with hPn
-      set Sn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input.rhs[k]'h).val else 0 with hSn
+      set Pn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input_lhs[k]'h).val else 0 with hPn
+      set Sn : ℕ → ℕ := fun k => if h : k < 2 * m - 1 then (input_rhs[k]'h).val else 0 with hSn
       have hPn_lt : ∀ k, Pn k < (m + 1) * 2 ^ (2 * B) := by
         intro k; simp only [hPn]; split
         · rename_i h; exact h_assumptions.1 ⟨k, h⟩
@@ -342,19 +566,19 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
       set PFn : ℕ → ℕ := fun k => ∑ j ∈ Finset.range (k + 1), Pn j * 2 ^ (B * j) with hPFn
       set PSn : ℕ → ℕ := fun k => ∑ j ∈ Finset.range (k + 1), Sn j * 2 ^ (B * j) with hPSn
       -- evalPartial equals our partial sums
-      have hPFn_eq : ∀ k, evalPartial B env input_var.lhs k = PFn k := by
+      have hPFn_eq : ∀ k, evalPartial B env input_var_lhs k = PFn k := by
         intro k; simp only [evalPartial, hPFn]
         apply Finset.sum_congr rfl
         intro j _; congr 1
         simp only [hPn]; split
-        · rename_i h; rw [← h_input]; simp [Vector.getElem_map]
+        · rename_i h; rw [← h_input.1]; simp [Vector.getElem_map]
         · rfl
-      have hPSn_eq : ∀ k, evalPartial B env input_var.rhs k = PSn k := by
+      have hPSn_eq : ∀ k, evalPartial B env input_var_rhs k = PSn k := by
         intro k; simp only [evalPartial, hPSn]
         apply Finset.sum_congr rfl
         intro j _; congr 1
         simp only [hSn]; split
-        · rename_i h; rw [← h_input]; simp [Vector.getElem_map]
+        · rename_i h; rw [← h_input.2]; simp [Vector.getElem_map]
         · rfl
       -- carry value
       set Dk : ℕ → ℕ := fun k => 2 ^ (B * (k + 1)) with hDk
@@ -364,16 +588,39 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
       have hPFn_app : ∀ k, PFn k = ∑ j ∈ Finset.range (k + 1), Pn j * 2 ^ (B * j) := fun k => rfl
       have hPSn_app : ∀ k, PSn k = ∑ j ∈ Finset.range (k + 1), Sn j * 2 ^ (B * j) := fun k => rfl
       have hCn_app : ∀ k, Cn k = OFFn + PFn k / Dk k - PSn k / Dk k := fun k => rfl
-      -- the witnessed value equals Cn
-      have hwit_eq : ∀ k, k < 2 * m - 1 → env.get (i₀ + k) = (Cn k : F p) := by
-        intro k hk
-        rw [h_wit ⟨k, hk⟩]
-        simp only [Vector.getElem_ofFn, hCn_app, hDk_app, hPFn_eq, hPSn_eq]
       -- per-sequence div bounds (carry magnitude)
       have hPFdiv : ∀ k, PFn k / Dk k ≤ OFFn := by
         intro k; rw [hOFF_eq]; exact partial_div_bound B m hB1 Pn hPn_lt k
       have hPSdiv : ∀ k, PSn k / Dk k ≤ OFFn := by
         intro k; rw [hOFF_eq]; exact partial_div_bound B m hB1 Sn hSn_lt k
+      have hOFF2 : OFFn + OFFn < p := by
+        have : OFFn * 2 = OFFn + OFFn := by ring
+        omega
+      -- the coefficient bounds in the variable-side shape the bridge wants
+      have hPb : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+          (Expression.eval env.toEnvironment (input_var_lhs[j]'hj)).val
+            < (m + 1) * 2 ^ (2 * B) := by
+        intro j hj
+        have h := h_assumptions.1 ⟨j, hj⟩
+        rw [← h_input.1] at h
+        simpa [Vector.getElem_map] using h
+      have hSb : ∀ (j : ℕ) (hj : j < 2 * m - 1),
+          (Expression.eval env.toEnvironment (input_var_rhs[j]'hj)).val
+            < (m + 1) * 2 ^ (2 * B) := by
+        intro j hj
+        have h := h_assumptions.2 ⟨j, hj⟩
+        rw [← h_input.2] at h
+        simpa [Vector.getElem_map] using h
+      -- the witnessed value equals Cn
+      have hwit_eq : ∀ k, k < 2 * m - 1 → env.get (i₀ + k) = (Cn k : F p) := by
+        intro k hk
+        have hcw := h_wit ⟨k, hk⟩
+        rw [getElem_eval_carryWitness ⟨B, W, hB, hW, hB1, hWB, hWp, hp⟩ _ _ env k hk
+            hPb hSb
+            (by rw [hPFn_eq k, ← hDk_app k]; exact hPFdiv k)
+            (by rw [hPSn_eq k, ← hDk_app k]; exact hPSdiv k)] at hcw
+        rw [hcw]
+        simp only [hCn_app, hDk_app, hPFn_eq, hPSn_eq, ← hOFFn]
       -- range check: each carry < 2^W
       have hrange : ∀ k, Cn k < 2 ^ W := by
         intro k
@@ -390,12 +637,12 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
         have : OFFn ≤ OFFn * 2 := Nat.le_mul_of_pos_right _ (by norm_num); omega
       have hOFFn_cast : (OFFn : F p).val = OFFn := ZMod.val_natCast_of_lt hOFFn_lt
       -- mod-matching: low digits of PFn and PSn agree through each index
-      have hPFn_top : PFn (2 * m - 2) = polyValue B input.lhs := by
+      have hPFn_top : PFn (2 * m - 2) = polyValue B input_lhs := by
         rw [hPFn_app, polyValue, ← Fin.sum_univ_eq_sum_range (fun j => Pn j * 2 ^ (B * j)),
           show 2 * m - 2 + 1 = 2 * m - 1 from by omega]
         apply Finset.sum_congr rfl (fun i _ => ?_)
         simp only [hPn, dif_pos i.isLt]
-      have hPSn_top : PSn (2 * m - 2) = polyValue B input.rhs := by
+      have hPSn_top : PSn (2 * m - 2) = polyValue B input_rhs := by
         rw [hPSn_app, polyValue, ← Fin.sum_univ_eq_sum_range (fun j => Sn j * 2 ^ (B * j)),
           show 2 * m - 2 + 1 = 2 * m - 1 from by omega]
         apply Finset.sum_congr rfl (fun i _ => ?_)
@@ -512,19 +759,19 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
         have hk := i.isLt
         have hnatk := hidx i.val hk
         -- evaluate symbolic subterms
-        have ha_e : Expression.eval env.toEnvironment input_var.lhs[i.val] = input.lhs[i.val]'hk := by
-          rw [← h_input]; simp [Vector.getElem_map]
-        have hb_e : Expression.eval env.toEnvironment input_var.rhs[i.val] = input.rhs[i.val]'hk := by
-          rw [← h_input]; simp [Vector.getElem_map]
+        have ha_e : Expression.eval env.toEnvironment input_var_lhs[i.val] = input_lhs[i.val]'hk := by
+          rw [← h_input.1]; simp [Vector.getElem_map]
+        have hb_e : Expression.eval env.toEnvironment input_var_rhs[i.val] = input_rhs[i.val]'hk := by
+          rw [← h_input.2]; simp [Vector.getElem_map]
         have hcin_e : Expression.eval env.toEnvironment
             (if h : i.val = 0 then 0 else var { index := i₀ + (i.val - 1) } - Expression.const (OFFn : F p))
             = if i.val = 0 then 0 else env.get (i₀ + (i.val - 1)) - (OFFn : F p) := by
-          split <;> simp [circuit_norm, sub_eq_add_neg]
+          split <;> simp [circuit_norm]
         rw [ha_e, hb_e, hcin_e]
         -- val-cast facts
-        have hAk : ((Pn i.val : ℕ) : F p) = (input.lhs[i.val]'hk) := by
+        have hAk : ((Pn i.val : ℕ) : F p) = (input_lhs[i.val]'hk) := by
           simp only [hPn, dif_pos hk]; rw [ZMod.natCast_zmod_val]
-        have hBk : ((Sn i.val : ℕ) : F p) = (input.rhs[i.val]'hk) := by
+        have hBk : ((Sn i.val : ℕ) : F p) = (input_rhs[i.val]'hk) := by
           simp only [hSn, dif_pos hk]; rw [ZMod.natCast_zmod_val]
         have hCk : ((Cn i.val : ℕ) : F p) = env.get (i₀ + i.val) := by
           rw [hwit_eq i.val hk]
@@ -550,22 +797,6 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] : FormalAssertion (F p) (Input
           rw [show 2 * m - 1 - 1 = 2 * m - 2 from by omega, hwit_eq (2 * m - 2) (by omega), hCtop]
         rw [this]; ring
 
-/-- The carry witness generator reads the input coefficient sequence only through
-`evalPartial`, which depends on `env` only via the evaluation of the input limbs.
-Hence it is invariant under environments that agree on those limbs. -/
-private lemma evalPartial_congr {n : ℕ} (B : ℕ) {env env' : ProverEnvironment (F p)}
-    (x : Var (fields n) (F p))
-    (h : ∀ j, (hj : j < n) →
-      Expression.eval env.toEnvironment x[j] = Expression.eval env'.toEnvironment x[j])
-    (k : ℕ) :
-    evalPartial B env x k = evalPartial B env' x k := by
-  simp only [evalPartial]
-  apply Finset.sum_congr rfl
-  intro j _
-  split
-  · rename_i hj; rw [h j hj]
-  · rfl
-
 open Challenge.Utils.ComputableWitnessLemmas in
 theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
     (circuit P).ComputableWitnesses := by
@@ -577,20 +808,17 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
   unfold main
   simp only [
     Circuit.bind_structuralComputableWitnesses_iff,
-    Circuit.witnessVector_structuralComputableWitnesses_iff,
     Circuit.forEach_structuralComputableWitnesses_iff,
     Circuit.assertZero_structuralComputableWitnesses_iff,
     FormalAssertion.assertion_structuralComputableWitnesses_iff,
     implies_true]
+  rw [show witnessVectorProgram (F := F p) (2 * m - 1) (carryWitness P input.lhs input.rhs)
+      = witnessIR (fields (2 * m - 1)) (carryWitness P input.lhs input.rhs).toIR from rfl,
+    Circuit.witnessIR_structuralComputableWitnesses_iff]
   refine ⟨?_, ?_, trivial, ?_⟩
-  · -- witnessVector obligation: generator agrees when the inputs agree
+  · -- witness obligation: the generator agrees when the inputs agree
     intro _ h_input
-    have hlhs : eval env input.lhs = eval env' input.lhs := by
-      have := congrArg (fun s : Inputs m (F p) => s.lhs) h_input
-      simpa [circuit_norm] using this
-    have hrhs : eval env input.rhs = eval env' input.rhs := by
-      have := congrArg (fun s : Inputs m (F p) => s.rhs) h_input
-      simpa [circuit_norm] using this
+    obtain ⟨hlhs, hrhs⟩ := eval_inputs_parts h_input
     have hlhs_j : ∀ j, (hj : j < 2 * m - 1) →
         Expression.eval env.toEnvironment input.lhs[j] = Expression.eval env'.toEnvironment input.lhs[j] := by
       intro j hj
@@ -601,7 +829,7 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
       intro j hj
       rw [ProvableType.getElem_eval_fields_prover input.rhs j hj,
           ProvableType.getElem_eval_fields_prover input.rhs j hj, hrhs]
-    simp only [evalPartial_congr P.B input.lhs hlhs_j, evalPartial_congr P.B input.rhs hrhs_j]
+    exact eval_toIR_carryWitness_congr P _ _ hlhs_j hrhs_j
   · -- forEach rangeCheck: each carry input is a previously-allocated witness var
     intro i
     refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
@@ -612,16 +840,27 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
       simp only [circuit_norm, Gadgets.ToBits.rangeCheck] at hle
       omega
     have hmem := eval_mem_varFromOffset_fields_of_agreesBelow h_agree hk
-    rw [CircuitType.eval_var_field_prover, CircuitType.eval_var_field_prover]
-    exact hmem _ (Vector.getElem_mem i.isLt)
+    have hx := hmem _ (Vector.getElem_mem i.isLt)
+    simp only [circuit_norm] at hx
+    simp only [circuit_norm]
+    exact hx
   · -- final top-carry assertion (or `pure ()` when 2m-1 = 0)
     split
     · simp only [Circuit.pure_structuralComputableWitnesses_iff]
     · simp only [Circuit.assertZero_structuralComputableWitnesses_iff]
+
+/-! ## Sealing the witness programs
+
+The programs are *data*, and big data: `circuit_norm` and any `rfl` that reaches a
+circuit's `localLength` would otherwise start evaluating them, since the digit lists
+are `map`s over `List.range` and the digit programs are ordinary recursions over
+those. Downstream files reason through the bridges above instead.
+-/
+
+attribute [irreducible] carryWitness
 
 end EqViaCarries
 
 end
 
 end Solution.RSASSAPKCS1v15_SHA256_4096_65537
-

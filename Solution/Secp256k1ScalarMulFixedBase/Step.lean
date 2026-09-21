@@ -28,9 +28,26 @@ structure Inputs (F : Type) where
   bit : F
 deriving ProvableStruct
 
+/-- Pack per-field agreement into an `eval`-agreement on a literal `Inputs`
+struct (the components list no longer iota-reduces on its own). -/
+lemma eval_inputs_mk {acc : Var FlaggedPoint (F circomPrime)}
+    {px py : Var Emu (F circomPrime)} {bit : Var field (F circomPrime)}
+    {e e' : ProverEnvironment (F circomPrime)}
+    (hacc : eval e acc = eval e' acc)
+    (hpx : eval e px = eval e' px) (hpy : eval e py = eval e' py)
+    (hbit : Expression.eval e.toEnvironment bit = Expression.eval e'.toEnvironment bit) :
+    eval e ({ acc := acc, px := px, py := py, bit := bit } : Var Inputs (F circomPrime))
+      = eval e' ({ acc := acc, px := px, py := py, bit := bit } : Var Inputs (F circomPrime)) := by
+  simp only [circuit_norm] at hacc hpx hpy ⊢
+  simp only [hacc, hpx, hpy, hbit]
+  exact ⟨trivial, trivial, trivial, trivial⟩
+
 def main (input : Var Inputs (F circomPrime)) :
     Circuit (F circomPrime) (Var FlaggedPoint (F circomPrime)) := do
-  let { acc, px, py, bit } := input
+  let acc := input.acc
+  let px := input.px
+  let py := input.py
+  let bit := input.bit
   let base : Var FlaggedPoint (F circomPrime) :=
     { x := px, y := py,
       isInf := ((0 : F circomPrime) : Expression (F circomPrime)) }
@@ -39,6 +56,7 @@ def main (input : Var Inputs (F circomPrime)) :
   subcircuit (Mux.circuit (M := FlaggedPoint))
     { selector := bit, ifTrue := added, ifFalse := doubled }
 
+set_option maxRecDepth 2000 in
 instance elaborated : ElaboratedCircuit (F circomPrime) Inputs FlaggedPoint main := by
   elaborate_circuit
 
@@ -59,6 +77,7 @@ def Spec (input : Inputs (F circomPrime)) (out : FlaggedPoint (F circomPrime)) :
         { x := decodeFe input.px, y := decodeFe input.py }
         (decodePoint input.acc) (input.bit.val)
 
+set_option maxRecDepth 2000 in
 theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
   circuit_proof_start [CompleteAdd.circuit, CompleteAdd.Assumptions, CompleteAdd.Spec,
     Mux.circuit, Mux.Assumptions, Mux.Spec]
@@ -83,6 +102,7 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
     simp only [Specs.ShortWeierstrass.step, if_true]
     exact ⟨haddv, by rw [hadde, hdble, hbased]⟩
 
+set_option maxRecDepth 2000 in
 theorem completeness : Completeness (F circomPrime) main Assumptions := by
   circuit_proof_start [CompleteAdd.circuit, CompleteAdd.Assumptions, CompleteAdd.Spec,
     Mux.circuit, Mux.Assumptions, Mux.Spec]
@@ -147,41 +167,29 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
       (Parent := Inputs) CompleteAdd.circuit _ _ _ ?_ CompleteAdd.computableWitnesses env env'
     intro k e e' hle h_agree h_in
-    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
-    obtain ⟨⟨haccx, haccy, hacci⟩, _, _, _⟩ := h_in
-    simp only [circuit_norm] at ⊢
-    rw [CompleteAdd.Inputs.mk.injEq]
-    exact ⟨by rw [FlaggedPoint.mk.injEq]; exact ⟨haccx, haccy, hacci⟩,
-      by rw [FlaggedPoint.mk.injEq]; exact ⟨haccx, haccy, hacci⟩⟩
+    simp only [circuit_norm] at h_in ⊢
+    -- both operands are the raw accumulator, so one component goal is left
+    exact h_in.1
   -- 2. added ← CompleteAdd { doubled, base } : P is the doubling output, Q the base point
   · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
       (Parent := Inputs) CompleteAdd.circuit _ _ _ ?_ CompleteAdd.computableWitnesses env env'
     intro k e e' hle h_agree h_in
-    simp only [circuit_norm] at hle
-    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
-    obtain ⟨⟨_, _, _⟩, hpx, hpy, _⟩ := h_in
-    simp only [circuit_norm] at ⊢
-    rw [CompleteAdd.Inputs.mk.injEq]
+    simp only [circuit_norm] at h_in ⊢
     refine ⟨?_, ?_⟩
     · -- P = doubled (CompleteAdd output at offset)
       have hd := completeAdd_output_stable { P := acc, Q := acc } (o := offset) h_agree (by omega)
       simp only [circuit_norm] at hd
       exact hd
-    · -- Q = base = { px, py, 0 }
-      rw [FlaggedPoint.mk.injEq]
-      exact ⟨hpx, hpy, rfl⟩
+    · -- Q = base = { px, py, 0 }; the constant flag needs no proof
+      exact ⟨h_in.2.1, h_in.2.2.1⟩
   -- 3. out ← Mux { bit, added, doubled } : selector is the raw bit, both branches are
   --    prior CompleteAdd outputs
   · refine Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
       (Parent := Inputs) (Mux.circuit (M := FlaggedPoint)) _ _ _ ?_
       (Mux.computableWitnesses (M := FlaggedPoint)) env env'
     intro k e e' hle h_agree h_in
-    simp only [circuit_norm] at hle
-    simp only [circuit_norm, Inputs.mk.injEq, FlaggedPoint.mk.injEq] at h_in
-    obtain ⟨⟨_, _, _⟩, _, _, hbit⟩ := h_in
-    simp only [circuit_norm] at ⊢
-    rw [Mux.Inputs.mk.injEq]
-    refine ⟨hbit, ?_, ?_⟩
+    simp only [circuit_norm] at h_in ⊢
+    refine ⟨h_in.2.2.2, ?_, ?_⟩
     · -- ifTrue = added (CompleteAdd output at offset + 15975)
       have ha := completeAdd_output_stable { P := doubled, Q := base } (o := offset + 15975)
         h_agree (by omega)
@@ -216,6 +224,7 @@ private lemma fpVar_stable {off k : ℕ} {env env' : ProverEnvironment (F circom
     Expression.eval]
   exact h_agree (off + i) (by omega)
 
+set_option maxRecDepth 2000 in
 /-- The output of `Step.main` is the final `FlaggedPoint` `Mux` witness block (the
 selected point), allocated at `offset + 31950` (after the two `CompleteAdd`
 blocks) and reading only its `size FlaggedPoint = 9` cells. Environments agreeing

@@ -148,14 +148,117 @@ structure Inputs (F : Type) where
   b : Emu F
 deriving ProvableStruct
 
+/-! ## Witness programs
+
+The difference is an *exact* 256-bit subtraction on merely normalized operands, so it
+needs two reduction stages: the register starts at `a + 2·P256` (a shift big enough that
+subtracting `b` never borrows), `b` is subtracted, and the modulus is conditionally
+subtracted twice. The borrow digit `q ∈ {0,1,2}` is the number of stages that did *not*
+reduce, so it comes out of the same chain. Both programs live in `Params`'s `IREmu`,
+shared with `SubMod`.
+-/
+
+theorem IREmu.emuSpan_add_two_modulus_lt : IREmu.emuSpan + 2 * P256 < WitgenNat.base ^ IREmu.workLen := by decide
+
+theorem span_lt_two_modulus : IREmu.emuSpan < 2 * P256 := by decide
+
+/-- The shifted register really holds `a + 2·P256 − b`. -/
+theorem shift_eq_of (a b : Var Emu (F circomPrime)) (env : ProverEnvironment (F circomPrime))
+    (hanorm : BigInt.Normalized limbBits (a.map (Expression.eval env.toEnvironment)))
+    (hbnorm : BigInt.Normalized limbBits (b.map (Expression.eval env.toEnvironment))) :
+    IREmu.shiftN (2 * P256) (IRLimbs.bigVal limbBits a env) (IRLimbs.bigVal limbBits b env)
+      = evalEmu env a + 2 * P256 - evalEmu env b := by
+  obtain ⟨ha, hb⟩ := IREmu.bigVal_pair hanorm hbnorm
+  have hsa : evalEmu env a < IREmu.emuSpan := by rw [← ha]; exact IREmu.bigVal_lt_span a env
+  have hsb : evalEmu env b < IREmu.emuSpan := by rw [← hb]; exact IREmu.bigVal_lt_span b env
+  have h1 := IREmu.emuSpan_add_two_modulus_lt
+  have h2 := span_lt_two_modulus
+  rw [ha, hb]
+  exact IREmu.shiftN_eq (by omega) (by omega) (by omega) (by omega)
+
+/-- Two reduction stages on that register leave the honest reduced difference. -/
+theorem redN2_shift_eq {va vb : ℕ} (hva : va < IREmu.emuSpan) (hvb : vb < IREmu.emuSpan) :
+    IREmu.redN IREmu.workLen (IREmu.redN IREmu.workLen (va + 2 * P256 - vb)) = subR va vb := by
+  have h1 := IREmu.emuSpan_add_two_modulus_lt
+  have h2 := span_lt_two_modulus
+  have hX : va + 2 * P256 - vb < WitgenNat.base ^ IREmu.workLen := by omega
+  by_cases hlt : va < vb
+  · by_cases hle : vb - va ≤ P256
+    · have hc1 : P256 ≤ va + 2 * P256 - vb := by omega
+      have hc2 : ¬ P256 ≤ va + 2 * P256 - vb - P256 := by omega
+      rw [IREmu.redN_unfold hX, if_pos hc1, IREmu.redN_unfold (by omega), if_neg hc2,
+        subR, subQ, if_pos hlt, if_pos hle]
+      omega
+    · have hc1 : ¬ P256 ≤ va + 2 * P256 - vb := by omega
+      rw [IREmu.redN_unfold hX, if_neg hc1, IREmu.redN_unfold hX, if_neg hc1,
+        subR, subQ, if_pos hlt, if_neg hle]
+  · have hc1 : P256 ≤ va + 2 * P256 - vb := by omega
+    have hc2 : P256 ≤ va + 2 * P256 - vb - P256 := by omega
+    rw [IREmu.redN_unfold hX, if_pos hc1, IREmu.redN_unfold (by omega), if_pos hc2,
+      subR, subQ, if_neg hlt]
+    omega
+
+/-- The two borrows count the stages that did not reduce, which is `subQ`. -/
+theorem redB2_shift_eq {va vb : ℕ} (hva : va < IREmu.emuSpan) (hvb : vb < IREmu.emuSpan) :
+    IREmu.redB IREmu.workLen (va + 2 * P256 - vb)
+        + IREmu.redB IREmu.workLen (IREmu.redN IREmu.workLen (va + 2 * P256 - vb))
+      = subQ va vb := by
+  have h1 := IREmu.emuSpan_add_two_modulus_lt
+  have h2 := span_lt_two_modulus
+  have hX : va + 2 * P256 - vb < WitgenNat.base ^ IREmu.workLen := by omega
+  by_cases hlt : va < vb
+  · by_cases hle : vb - va ≤ P256
+    · have hc1 : P256 ≤ va + 2 * P256 - vb := by omega
+      have hc2 : ¬ P256 ≤ va + 2 * P256 - vb - P256 := by omega
+      rw [IREmu.redN_unfold hX, if_pos hc1, IREmu.redB_unfold hX, if_pos hc1,
+        IREmu.redB_unfold (by omega), if_neg hc2, subQ, if_pos hlt, if_pos hle]
+    · have hc1 : ¬ P256 ≤ va + 2 * P256 - vb := by omega
+      rw [IREmu.redN_unfold hX, if_neg hc1, IREmu.redB_unfold hX, if_neg hc1,
+        subQ, if_pos hlt, if_neg hle]
+  · have hc1 : P256 ≤ va + 2 * P256 - vb := by omega
+    have hc2 : P256 ≤ va + 2 * P256 - vb - P256 := by omega
+    rw [IREmu.redN_unfold hX, if_pos hc1, IREmu.redB_unfold hX, if_pos hc1,
+      IREmu.redB_unfold (by omega), if_pos hc2, subQ, if_neg hlt]
+
+/-- Bridge for the reduced-difference witness: on normalized operands the witnessed
+vector is `emuOfNat (subR a.value b.value)`. -/
+theorem eval_rProg_of (a b : Var Emu (F circomPrime)) (env : ProverEnvironment (F circomPrime))
+    (hanorm : BigInt.Normalized limbBits (a.map (Expression.eval env.toEnvironment)))
+    (hbnorm : BigInt.Normalized limbBits (b.map (Expression.eval env.toEnvironment))) :
+    Witgen.VExpr.eval
+        { env := env, locals := Witgen.evalSteps env (IREmu.subLRProg a b #[]).2.toList }
+        (IREmu.subLRProg a b #[]).1
+      = emuOfNat (subR (evalEmu env a) (evalEmu env b)) := by
+  obtain ⟨ha, hb⟩ := IREmu.bigVal_pair hanorm hbnorm
+  have hsa : evalEmu env a < IREmu.emuSpan := by rw [← ha]; exact IREmu.bigVal_lt_span a env
+  have hsb : evalEmu env b < IREmu.emuSpan := by rw [← hb]; exact IREmu.bigVal_lt_span b env
+  rw [IRLimbs.eval_program (IREmu.computesV_subLRProg a b) env,
+    shift_eq_of a b env hanorm hbnorm, redN2_shift_eq hsa hsb]
+
+/-- Bridge for the borrow digit. -/
+theorem eval_qProg_of (a b : Var Emu (F circomPrime)) (env : ProverEnvironment (F circomPrime))
+    (hanorm : BigInt.Normalized limbBits (a.map (Expression.eval env.toEnvironment)))
+    (hbnorm : BigInt.Normalized limbBits (b.map (Expression.eval env.toEnvironment))) :
+    Witgen.FExpr.eval
+        { env := env, locals := Witgen.evalSteps env (IREmu.subLQProg a b #[]).2.toList }
+        (IREmu.subLQProg a b #[]).1
+      = ((subQ (evalEmu env a) (evalEmu env b) : ℕ) : F circomPrime) := by
+  obtain ⟨ha, hb⟩ := IREmu.bigVal_pair hanorm hbnorm
+  have hsa : evalEmu env a < IREmu.emuSpan := by rw [← ha]; exact IREmu.bigVal_lt_span a env
+  have hsb : evalEmu env b < IREmu.emuSpan := by rw [← hb]; exact IREmu.bigVal_lt_span b env
+  rw [IRLimbs.eval_programF (IREmu.computesF_subLQProg a b) env,
+    shift_eq_of a b env hanorm hbnorm, redB2_shift_eq hsa hsb, FiniteField.fromNat_F]
+
 def main (input : Var Inputs (F circomPrime)) :
     Circuit (F circomPrime) (Var Emu (F circomPrime)) := do
-  let { a, b } := input
+  let a := input.a
+  let b := input.b
 
-  let r ← ProvableType.witness (α := Emu) fun env =>
-    emuOfNat (subR (evalEmu env a) (evalEmu env b))
-  let q ← ProvableType.witness (α := field) fun env =>
-    ((subQ (evalEmu env a) (evalEmu env b) : ℕ) : F circomPrime)
+  -- `r` is the doubly-reduced shifted difference, `q` the borrow digit that counts
+  -- how many of the two stages did not reduce
+  let r ← witnessVectorProgram numLimbs (IREmu.subLRProg a b)
+  let q ← witnessProgram (F := F circomPrime) (value := field) (var := Expression)
+    (IREmu.subLQProg a b)
 
   Gadgets.ToBits.rangeCheck 2 (by decide) q
 
@@ -285,9 +388,22 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     rw [evalEmu, BigInt.value, ← h_input.1]
   have hevb : evalEmu env input_var_b = BigInt.value limbBits input_b := by
     rw [evalEmu, BigInt.value, ← h_input.2]
-  rw [heva, hevb] at h_env
+  -- side conditions of the `rIR` bridge: both operands are normalized
+  have hanorm' : BigInt.Normalized limbBits
+      (input_var_a.map (Expression.eval env.toEnvironment)) := by rw [h_input.1]; exact ha_norm
+  have hbnorm' : BigInt.Normalized limbBits
+      (input_var_b.map (Expression.eval env.toEnvironment)) := by rw [h_input.2]; exact hb_norm
+  -- the witness-IR bridges, in the vocabulary `completeness_core` expects
+  have hwit_r : ∀ i : Fin numLimbs, env.toEnvironment.get (i₀ + i.val)
+      = (emuOfNat (subR (BigInt.value limbBits input_a) (BigInt.value limbBits input_b)))[i.val] := by
+    intro i
+    have hget := h_env.1 i
+    rw [eval_rProg_of _ _ env hanorm' hbnorm', heva, hevb] at hget
+    exact hget
+  have hwit_q := h_env.2
+  rw [eval_qProg_of _ _ env hanorm' hbnorm', heva, hevb] at hwit_q
   exact completeness_core i₀ env.toEnvironment input_var_a input_var_b input_a input_b
-    h_input.1 h_input.2 ha_norm hb_norm h_env.1 h_env.2
+    h_input.1 h_input.2 ha_norm hb_norm hwit_r hwit_q
 
 def circuit : FormalCircuit (F circomPrime) Inputs Emu where
   main; elaborated; Assumptions; Spec; soundness; completeness

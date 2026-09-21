@@ -6,7 +6,9 @@
         "Solution.AssertBytes.completeness",
         "Solution.AssertBytes.mainCost",
         "Solution.AssertBytes.isR1CS",
-        "Solution.AssertBytes.computableWitness"
+        "Solution.AssertBytes.witgenIsIR",
+        "Solution.AssertBytes.computableWitness",
+        "Solution.AssertBytes.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.AssertBytes.main",

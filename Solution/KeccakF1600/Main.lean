@@ -5,6 +5,7 @@ import Solution.KeccakF1600.Cost
 import Solution.KeccakF1600.Permutation
 import Solution.KeccakF1600.PermutationCost
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 import Challenge.Utils.ComputableWitnessLemmas
 
 namespace Solution.KeccakF1600
@@ -67,7 +68,7 @@ theorem computableWitness : ∀ n input,
     Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct :
       Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
         input env env' n ((main input).operations n) := by
@@ -90,15 +91,17 @@ theorem computableWitness : ∀ n input,
         eval_keccakState e'.toEnvironment (toLanes input.state),
         eval_toLanes_vec, eval_toLanes_vec]
     congr 1
+    obtain ⟨s⟩ := input
     have hstate := congrArg (fun x : Input (F circomPrime) => x.state) h_input
-    simpa [circuit_norm] using hstate
+    simp only [circuit_norm, explicit_provable_type] at hstate ⊢
+    exact hstate
   have hflat :=
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
       input env env' hstruct
   unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F circomPrime) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
       n ≤ off →
@@ -135,6 +138,7 @@ end
 
 section
 open Challenge.CostR1CS
+open Challenge.WitgenIR
 open Solution.KeccakF1600.Cost
 
 -- `maxRecDepth` controls elaboration stack depth only (not the trusted base and
@@ -144,6 +148,7 @@ set_option maxRecDepth 8000
 -- Keep the trusted R1CS predicates opaque while *applying* the per-gadget
 -- certificates (see `Cost.lean`).
 attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperationsIsR1CS
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
 
 @[reducible] def allocations : Nat := 153600
 @[reducible] def constraints : Nat := 153600
@@ -157,6 +162,13 @@ theorem mainCost :
   fun input =>
   (CostIs.bind (costIs_sub_permutation _) fun _ => CostIs.pure _
     : CostIs (main input) ⟨allocations, constraints⟩)
+
+theorem usesIR_sub_permutation (b : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (subcircuit Permutation.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => Permutation.usesIR b n)
+
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main :=
+  fun _ => UsesIRCirc.bind (usesIR_sub_permutation _) fun _ => UsesIRCirc.pure _
 
 theorem r1cs_sub_permutation (b : Var KeccakBitState (F circomPrime)) (hb : StateAffine b) :
     IsR1CSCirc (subcircuit Permutation.circuit b) :=
@@ -176,10 +188,12 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   isR1CS_of_IsR1CSCirc
   (fun input hinput => by
     have hbits : ∀ i (hi : i < 1600), Affine (input.state[i]'hi) := by
+      obtain ⟨s⟩ := input
       intro i hi
       have hsz : size Input = 1600 := rfl
-      simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz] using
-        hinput i (by omega)
+      have h := hinput i (by omega)
+      simp only [circuit_norm, explicit_provable_type] at h
+      exact h
     have h0 : StateAffine (toLanes input.state) := stateAffine_toLanes hbits
     exact IsR1CSCirc.bind_out (r1cs_sub_permutation _ h0) fun _ => IsR1CSCirc.pure _)
   (fun input hinput => by
@@ -191,5 +205,17 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
     exact affine_fromLanes (stateAffine_subOut_permutation _ _) i hi1600)
 
 end
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.KeccakF1600

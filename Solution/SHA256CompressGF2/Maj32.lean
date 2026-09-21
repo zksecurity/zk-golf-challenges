@@ -13,11 +13,14 @@ open Challenge.CostR1CS
 namespace Maj32
 
 /-- Input `v = a ‖ b ‖ c`. Witness `maj_j = (a_j+c_j)·(b_j+c_j) + c_j`, pin with
-`(w − c) − (a+c)·(b+c) = 0`. -/
+`(w − c) − (a+c)·(b+c) = 0`.
+
+The witness program is a literal vector of those same circuit expressions, embedded into
+the witness IR through `FExpr.expr`, so cell `j` reads back as their evaluation. -/
 def main (v : Var (fields 96) (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
-  let w ← witnessVector 32 (fun env => Vector.ofFn fun i : Fin 32 =>
+  let w ← Circuit.witnessVector 32 (.lit <| .ofFn fun i : Fin 32 => Witgen.FExpr.expr
     ((a96 v i.val + a96 v (64 + i.val)) * (a96 v (32 + i.val) + a96 v (64 + i.val))
-      + a96 v (64 + i.val)).eval env)
+      + a96 v (64 + i.val)))
   Circuit.forEach (Vector.finRange 32) (fun i =>
     assertZero ((w[i.val]'i.isLt - a96 v (64 + i.val))
       - (a96 v i.val + a96 v (64 + i.val)) * (a96 v (32 + i.val) + a96 v (64 + i.val))))
@@ -54,7 +57,6 @@ theorem completeness : Completeness (F p2) main Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 96) (fields 32) :=
@@ -81,7 +83,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, a96, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `Maj` expression, so it reads only the input
+    simp only [a96, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 

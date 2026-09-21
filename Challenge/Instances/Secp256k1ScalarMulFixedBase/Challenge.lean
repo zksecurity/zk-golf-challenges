@@ -2,6 +2,7 @@ import Challenge.Specs.Secp256k1
 import Clean.Circuit
 import Clean.Utils.Tactics.ProvableStructDeriving
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 import Challenge.Instances.Secp256k1ScalarMulFixedBase.Interface
 import Challenge.Instances.Secp256k1ScalarMulFixedBase.Cost
 
@@ -27,14 +28,20 @@ theorem completeness : GeneralFormalCircuit.Completeness (F circomPrime) main Pr
 
 theorem mainCost : Challenge.CostR1CS.circuitCost main ⟨allocations, constraints⟩ := sorry
 theorem isR1CS : Challenge.CostR1CS.isR1CS main := sorry
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := sorry
 
 theorem computableWitness : ∀ n input,
   ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F circomPrime) => eval env input) →
   Circuit.ComputableWitnesses (main input) n := sorry
 
+theorem requirementsChannelsLawful : ∀ input offset,
+  ((main input).operations offset).RequirementsChannelsLawful
+    elaborated.channelsWithGuarantees [] := sorry
+
 def formalCircuit : GeneralFormalCircuit (F circomPrime) Input Output :=
   {
     main := main
+    requirementsChannelsLawful := requirementsChannelsLawful
     Assumptions := Assumptions
     Spec := Spec
     ProverAssumptions := ProverAssumptions

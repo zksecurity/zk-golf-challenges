@@ -23,7 +23,7 @@ as the general R1CS certification and the cost model.
 
 namespace Challenge.CostR1CS
 
-variable {F : Type} [Field F] {α : Type}
+variable {F : Type} [FiniteField F] {α : Type}
 
 /-- One canonical constraint row *at pin index `k`*: `e = var k − A·B` with
 `A, B` affine. The `C`-side is exactly the variable `k`; `k` is an argument,

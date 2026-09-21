@@ -206,11 +206,12 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       ∀ a ∈ input.schedule[i], Expression.eval env.toEnvironment a =
         Expression.eval env'.toEnvironment a := by
     intro env env' i h_input a ha
+    obtain ⟨ist, isch⟩ := input
     simp [circuit_norm] at h_input
-    have hword : Vector.map (Expression.eval env.toEnvironment) input.schedule[i] =
-        Vector.map (Expression.eval env'.toEnvironment) input.schedule[i] := by
-      rw [← CircuitType.eval_var_fields env.toEnvironment (input.schedule[i]),
-        ← CircuitType.eval_var_fields env'.toEnvironment (input.schedule[i])]
+    have hword : Vector.map (Expression.eval env.toEnvironment) isch[i] =
+        Vector.map (Expression.eval env'.toEnvironment) isch[i] := by
+      rw [← CircuitType.eval_var_fields env.toEnvironment (isch[i]),
+        ← CircuitType.eval_var_fields env'.toEnvironment (isch[i])]
       have h := congrArg (fun s : SHA256Schedule (F p) => s[i.val]'i.isLt) h_input.2
       simpa [getElem_eval_vector] using h
     simp only [Vector.mem_iff_getElem] at ha
@@ -230,7 +231,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
               w := input.schedule[i] })
         input.state i =
           stateVar offset input.state i.val := by
-    simpa only using foldlAcc_eq_stateVar_main offset input.state input.schedule i
+    exact foldlAcc_eq_stateVar_main offset input.state input.schedule i
   rw [hacc]
   exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses_of_condition
     SHA256Round.circuit input
@@ -243,11 +244,15 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         input.schedule[i]⟩)
     (by
       intro k env env' hle h_agree h_input
+      have hstate : eval env.toEnvironment input.state = eval env'.toEnvironment input.state := by
+        obtain ⟨_st, _sch⟩ := input
+        simp [circuit_norm] at h_input
+        exact h_input.1
       have hround : env.AgreesBelow (offset + i.val * 455) env' :=
         ProverEnvironment.agreesBelow_of_le h_agree (by
           simp [SHA256Round.circuit, circuit_norm] at hle
           simpa [SHA256Round.circuit, circuit_norm] using hle)
-      simp [circuit_norm] at h_input ⊢
+      simp [circuit_norm]
       refine ⟨?_, ?_, ?_⟩
       · apply Vector.ext
         intro j hj
@@ -260,7 +265,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
           ← ProvableType.getElem_eval_fields env'.toEnvironment
             ((stateVar offset input.state i.val)[j]'hj) b hb]
         exact eval_mem_stateVar_of_agreesBelow (offset := offset) (k := i.val)
-          (by omega) hround h_input.1 j hj
+          (by omega) hround hstate j hj
           (((stateVar offset input.state i.val)[j]'hj)[b]'hb)
           (Vector.getElem_mem _)
       · intro a ha
@@ -268,9 +273,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         rcases ha with ⟨j, hj, hget⟩
         rw [← hget]
         simp [constWord32, Expression.eval]
-      · exact hschedule_eq i (by
-          simp [circuit_norm]
-          exact ⟨h_input.1, h_input.2⟩))
+      · exact hschedule_eq i h_input)
     SHA256Round.computableWitnesses env env'
 
 end SHA256Rounds

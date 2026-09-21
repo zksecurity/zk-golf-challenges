@@ -44,7 +44,6 @@ theorem coordVal_eq (v : Vector (F circomPrime) Interface.coordBytes) :
     Interface.coordVal v = ScalarMul.coordVal v := by
   rw [Interface.coordVal, ScalarMul.coordVal, ← foldl_base256_eq_fromLimbs,
     List.foldl_map]
-  rfl
 
 /-! ## The fixed generator as constant limbs -/
 
@@ -148,4 +147,17 @@ theorem decodeOutput_eq (out : ScalarMul.Outputs (F circomPrime)) :
       coordVal_eq, coordVal_eq]
 
 end MainTheorems
+open Challenge.Instances.Secp256k1ScalarMulFixedBase in
+/-- Per-field projection of an `eval`-agreement hypothesis on the trusted `Input`
+struct. The `Var Input` `match` no longer iota-reduces on a struct *variable*, so
+the destructuring has to happen here, once. -/
+lemma eval_input_parts_eq {input : Var Interface.Input (F Interface.circomPrime)}
+    {e1 e2 : ProverEnvironment (F Interface.circomPrime)}
+    (h : eval e1 input = eval e2 input) :
+    Vector.map (Expression.eval e1.toEnvironment) input.bits
+      = Vector.map (Expression.eval e2.toEnvironment) input.bits := by
+  obtain ⟨bits⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Interface.Input.mk.injEq] at h
+  exact h
+
 end Solution.Secp256k1ScalarMulFixedBase

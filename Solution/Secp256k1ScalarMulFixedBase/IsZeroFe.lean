@@ -46,8 +46,7 @@ def Spec (x : Emu (F circomPrime)) (out : F circomPrime) : Prop :=
 
 theorem soundness :
     Soundness (Input := Emu) (Output := field) (F circomPrime) main Assumptions Spec := by
-  circuit_proof_start [Gadgets.IsZeroField.circuit, Gadgets.IsZeroField.Assumptions,
-    Gadgets.IsZeroField.Spec]
+  circuit_proof_start [Gadgets.IsZeroField.circuit]
   obtain ⟨hz0, hz1, hz2, hz3, ht01, ht23, hz⟩ := h_holds
   have hx : ∀ (i : ℕ) (hi : i < 4), Expression.eval env input_var[i] = input[i] := by
     intro i hi
@@ -64,10 +63,9 @@ theorem soundness :
 
 theorem completeness :
     Completeness (Input := Emu) (Output := field) (F circomPrime) main Assumptions := by
-  circuit_proof_start [Gadgets.IsZeroField.circuit, Gadgets.IsZeroField.Assumptions,
-    Gadgets.IsZeroField.Spec]
+  circuit_proof_start [Gadgets.IsZeroField.circuit]
   obtain ⟨-, -, -, -, ht01, ht23, hz⟩ := h_env
-  exact ⟨ht01, ht23, hz⟩
+  exact ⟨ht01 0, ht23 0, hz 0⟩
 
 /-- The `IsZeroFe` formal circuit: boolean zero flag of a canonical element. -/
 def circuit : FormalCircuit (F circomPrime) Emu field where
@@ -78,103 +76,6 @@ def circuit : FormalCircuit (F circomPrime) Emu field where
   soundness := soundness
   completeness := completeness
 
-private theorem equalityComputableWitnesses (M : TypeMap) [ProvableType M] :
-    (Gadgets.Equality.circuit (F := F circomPrime) M).ComputableWitnesses := by
-  intro offset input env env'
-  change Operations.forAllFlat offset
-    (Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition input env env')
-    (((Gadgets.Equality.circuit (F := F circomPrime) M).main input).operations offset)
-  apply
-    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-  unfold Gadgets.Equality.circuit Gadgets.Equality.main
-  simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
-  intro _
-  trivial
-
-private lemma witnessField_localLength_one
-    (compute : ProverEnvironment (F circomPrime) → F circomPrime) (offset : ℕ) :
-    (witnessField compute).localLength offset = 1 := by
-  unfold Circuit.witnessField
-  change ((var <$> witnessVar compute).localLength offset) = 1
-  rw [Circuit.map_localLength_eq]
-  simp [Circuit.witnessVar, Circuit.localLength, Operations.localLength]
-
-private def xInvCompute (input : Expression (F circomPrime))
-    (env : ProverEnvironment (F circomPrime)) : F circomPrime :=
-  if Expression.eval env.toEnvironment input = 0 then 0
-  else (Expression.eval env.toEnvironment input)⁻¹
-
-private def xInvCircuit (input : Expression (F circomPrime)) :
-    Circuit (F circomPrime) (Expression (F circomPrime)) :=
-  witnessField (xInvCompute input)
-
-private def isZeroFieldMain (input : Expression (F circomPrime)) :
-    Circuit (F circomPrime) (Expression (F circomPrime)) := do
-  let xInv ← xInvCircuit input
-  let isZero <== 1 - input * xInv
-  isZero * input === 0
-  return isZero
-
-private lemma xInvCircuit_localLength_one
-    (input : Expression (F circomPrime)) (offset : ℕ) :
-    (xInvCircuit input).localLength offset = 1 := by
-  exact witnessField_localLength_one (xInvCompute input) offset
-
-private theorem assignEqField_structuralComputableWitnesses_of_condition
-    {Parent : TypeMap} [CircuitType Parent]
-    (parentInput : Var Parent (F circomPrime))
-    (rhs : Expression (F circomPrime)) (offset : ℕ)
-    (hrhs : ∀ (k : ℕ) (env env' : ProverEnvironment (F circomPrime)),
-      offset ≤ k → env.AgreesBelow k env' →
-      eval env parentInput = eval env' parentInput →
-      Expression.eval env.toEnvironment rhs = Expression.eval env'.toEnvironment rhs) :
-    ∀ env env',
-      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
-        parentInput env env' offset ((HasAssignEq.assignEq rhs).operations offset) := by
-  intro env env'
-  unfold HasAssignEq.assignEq instHasAssignEqExpression
-  simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessField_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
-    and_true]
-  constructor
-  · intro h_agree h_parent
-    exact hrhs offset env env' (Nat.le_refl offset) h_agree h_parent
-  · constructor
-    · apply Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.subcircuit_flatStructuralComputableWitnesses_of_condition
-      · intro k env env' hk h_agree h_parent
-        have hlen :
-            (witnessField fun env : ProverEnvironment (F circomPrime) =>
-              Expression.eval env.toEnvironment rhs).localLength offset = 1 :=
-          witnessField_localLength_one _ offset
-        rw [show eval env (((witnessField fun env => Expression.eval env.toEnvironment rhs).output offset, rhs) :
-              ProvablePair field field (Expression (F circomPrime))) =
-              (eval env ((witnessField fun env => Expression.eval env.toEnvironment rhs).output offset),
-                eval env rhs) by
-            exact CircuitType.eval_var_pair_prover (M := field) (N := field) env _ _,
-          show eval env' (((witnessField fun env => Expression.eval env.toEnvironment rhs).output offset, rhs) :
-              ProvablePair field field (Expression (F circomPrime))) =
-              (eval env' ((witnessField fun env => Expression.eval env.toEnvironment rhs).output offset),
-                eval env' rhs) by
-            exact CircuitType.eval_var_pair_prover (M := field) (N := field) env' _ _]
-        apply Prod.ext
-        · simp only
-          rw [CircuitType.eval_expression_prover_to_verifier (M := field),
-            CircuitType.eval_expression_prover_to_verifier (M := field)]
-          rw [CircuitType.eval_var_field, CircuitType.eval_var_field]
-          simp [Circuit.witnessField, Circuit.witnessVar, Circuit.output, Expression.eval]
-          exact h_agree offset (by omega)
-        · simp only
-          rw [CircuitType.eval_expression_prover_to_verifier (M := field),
-            CircuitType.eval_expression_prover_to_verifier (M := field)]
-          rw [CircuitType.eval_var_field, CircuitType.eval_var_field]
-          exact hrhs k env env' (by omega) h_agree h_parent
-      · exact equalityComputableWitnesses id
-    · trivial
-
 private lemma expression_stable_of_field_eval_eq
     {env env' : ProverEnvironment (F circomPrime)}
     {x : Expression (F circomPrime)}
@@ -184,44 +85,6 @@ private lemma expression_stable_of_field_eval_eq
     CircuitType.eval_expression_prover_to_verifier (M := field)] at h
   rw [CircuitType.eval_var_field, CircuitType.eval_var_field] at h
   exact h
-
-private lemma xInvCompute_stable
-    {env env' : ProverEnvironment (F circomPrime)}
-    {input : Expression (F circomPrime)}
-    (h : eval env input = eval env' input) :
-    xInvCompute input env = xInvCompute input env' := by
-  have hx := expression_stable_of_field_eval_eq h
-  simp [xInvCompute, hx]
-
-private lemma xInv_output_stable
-    (input : Expression (F circomPrime)) {offset k : ℕ}
-    {env env' : ProverEnvironment (F circomPrime)}
-    (h_agree : env.AgreesBelow k env') (hk : offset < k) :
-    Expression.eval env.toEnvironment ((xInvCircuit input).output offset) =
-      Expression.eval env'.toEnvironment ((xInvCircuit input).output offset) := by
-  simp [xInvCircuit, Circuit.witnessField, Circuit.output]
-  exact h_agree offset hk
-
-private theorem equalityFieldPair_flatStructural_of_condition
-    {Parent : TypeMap} [CircuitType Parent]
-    (parentInput : Var Parent (F circomPrime))
-    (lhs rhs : Expression (F circomPrime)) (offset : ℕ)
-    (hinput : ∀ (k : ℕ) (env env' : ProverEnvironment (F circomPrime)),
-      offset ≤ k →
-      env.AgreesBelow k env' →
-      eval env parentInput = eval env' parentInput →
-      eval env ((lhs, rhs) : ProvablePair field field (Expression (F circomPrime))) =
-        eval env' ((lhs, rhs) : ProvablePair field field (Expression (F circomPrime)))) :
-    ∀ env env',
-      Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.FlatOperation.StructuralComputableWitnesses
-        parentInput env env' offset
-        ((Gadgets.Equality.circuit (F := F circomPrime) id).toSubcircuit offset
-          ((lhs, rhs) : ProvablePair field field (Expression (F circomPrime)))).ops.toFlat := by
-  exact @Challenge.Utils.ComputableWitnessLemmas.FormalAssertion.subcircuit_flatStructuralComputableWitnesses_of_condition
-    (F circomPrime) _ Parent (ProvablePair field field) _ _
-    (Gadgets.Equality.circuit (F := F circomPrime) id) parentInput
-    ((lhs, rhs) : ProvablePair field field (Expression (F circomPrime)))
-    offset hinput (equalityComputableWitnesses id)
 
 private theorem toFlat_append (a b : Operations (F circomPrime)) :
     (a ++ b).toFlat = a.toFlat ++ b.toFlat := by
@@ -300,76 +163,20 @@ private theorem isZeroFieldComputableWitnesses :
     (((Gadgets.IsZeroField.circuit (F := F circomPrime)).main input).operations offset)
   apply
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-  change
-    Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
-      input env env' offset ((isZeroFieldMain input).operations offset)
-  unfold isZeroFieldMain
-  simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
-    and_true]
-  and_intros
-  · intro _ h_input
-    apply Vector.ext
-    intro i hi
-    have hi0 : i = 0 := by omega
-    subst i
-    simpa using xInvCompute_stable h_input
-  · trivial
-  · intro h_agree h_input
-    apply Vector.ext
-    intro i hi
-    have hi0 : i = 0 := by omega
-    subst i
-    have hx := expression_stable_of_field_eval_eq h_input
-    have hxInvRaw : Expression.eval env.toEnvironment
-          (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-            if Expression.eval env.toEnvironment input = 0 then 0
-            else (Expression.eval env.toEnvironment input)⁻¹) :
-              Circuit (F circomPrime) (Expression (F circomPrime))).output offset) =
-        Expression.eval env'.toEnvironment
-          (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-            if Expression.eval env.toEnvironment input = 0 then 0
-            else (Expression.eval env.toEnvironment input)⁻¹) :
-              Circuit (F circomPrime) (Expression (F circomPrime))).output offset) := by
-      simp [Circuit.witnessField, Circuit.output]
-      apply h_agree
-      change offset < offset + 1
-      omega
-    have hscalar :
-        1 + -1 * (Expression.eval env.toEnvironment input *
-            Expression.eval env.toEnvironment
-              (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-                if Expression.eval env.toEnvironment input = 0 then 0
-                else (Expression.eval env.toEnvironment input)⁻¹) :
-                  Circuit (F circomPrime) (Expression (F circomPrime))).output offset)) =
-          1 + -1 * (Expression.eval env'.toEnvironment input *
-            Expression.eval env'.toEnvironment
-              (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-                if Expression.eval env.toEnvironment input = 0 then 0
-                else (Expression.eval env.toEnvironment input)⁻¹) :
-                  Circuit (F circomPrime) (Expression (F circomPrime))).output offset)) := by
-      rw [hx, hxInvRaw]
-    change
-      1 + -1 * (Expression.eval env.toEnvironment input *
-        Expression.eval env.toEnvironment
-          (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-            if Expression.eval env.toEnvironment input = 0 then 0
-            else (Expression.eval env.toEnvironment input)⁻¹) :
-              Circuit (F circomPrime) (Expression (F circomPrime))).output offset)) =
-      1 + -1 * (Expression.eval env'.toEnvironment input *
-        Expression.eval env'.toEnvironment
-          (((witnessField fun env : ProverEnvironment (F circomPrime) =>
-            if Expression.eval env.toEnvironment input = 0 then 0
-            else (Expression.eval env.toEnvironment input)⁻¹) :
-              Circuit (F circomPrime) (Expression (F circomPrime))).output offset))
-    exact hscalar
-  ·
-    exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
-  · trivial
-  ·
-    exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
-  · trivial
+  simp only [Gadgets.IsZeroField.circuit, circuit_norm]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · -- the inverse witness reads only the gadget input
+    intro _ h_input
+    -- `simp only` (not `rw`): the `Decidable` instance in the witness generator's
+    -- `if` mentions the evaluated input, so `rw`'s motive does not typecheck; the
+    -- trailing `congr` discharges the leftover instance mismatch
+    simp only [h_input]
+    congr 5
+  · -- the flag witness reads the input and the inverse cell allocated just below
+    intro h_agree h_input
+    rw [h_input, h_agree offset (by omega)]
+  · exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
+  · exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
 
 /-- The `IsZeroField` subcircuit's output is its second witness cell (offset `+1`);
 its value only depends on `env` below `base + 2`, so it is stable across
@@ -418,16 +225,11 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
       (subcircuit Gadgets.IsZeroField.circuit y).localLength o = 2 := by
     intro y o
     simp only [circuit_norm, Gadgets.IsZeroField.circuit]
-  have hA : ∀ (r : Var field (F circomPrime)) (o : ℕ),
-      (HasAssignEq.assignEq (β := field (Expression (F circomPrime))) r).localLength o = 1 := by
-    intro r o
-    simp only [circuit_norm, HasAssignEq.assignEq]
   unfold main
   simp only [
     Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
-    hL, hA, and_true]
+    hL]
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   -- four `IsZeroField` subcircuits, each on a direct input limb
   · exact Challenge.Utils.ComputableWitnessLemmas.FormalCircuit.subcircuit_flatStructuralComputableWitnesses
@@ -445,34 +247,31 @@ theorem computableWitnesses : circuit.base.ComputableWitnesses := by
   -- `t01 <== z0 * z1`: witness reads the two prior `IsZeroField` output flags
   · refine ⟨?_, ?_, ?_⟩
     · intro h_agree _
+      simp only [Witgen.WitgenIR.eval_ofExprs_toElements]
       refine congrArg toElements ?_
       have h0 := isZeroField_output_eval_stable (base := offset) input[0] h_agree (by omega)
       have h1 := isZeroField_output_eval_stable (base := offset + 2) input[1] h_agree (by omega)
-      simp only [CircuitType.eval_var_field_prover, Expression.eval, h0, h1]
+      simp only [CircuitType.eval_var_field, Expression.eval, h0, h1]
     · exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
     · trivial
   -- `t23 <== z2 * z3`
   · refine ⟨?_, ?_, ?_⟩
     · intro h_agree _
+      simp only [Witgen.WitgenIR.eval_ofExprs_toElements]
       refine congrArg toElements ?_
       have h2 := isZeroField_output_eval_stable (base := offset + 2 + 2) input[2] h_agree (by omega)
       have h3 := isZeroField_output_eval_stable (base := offset + 2 + 2 + 2) input[3] h_agree (by omega)
-      simp only [CircuitType.eval_var_field_prover, Expression.eval, h2, h3]
+      simp only [CircuitType.eval_var_field, Expression.eval, h2, h3]
     · exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
     · trivial
   -- `z <== t01 * t23`: witness reads the two prior assignment cells
   · refine ⟨?_, ?_, ?_⟩
     · intro h_agree _
+      simp only [Witgen.WitgenIR.eval_ofExprs_toElements]
       refine congrArg toElements ?_
-      have h01 := assignEq_output_eval_stable
-        ((subcircuit Gadgets.IsZeroField.circuit input[0]).output offset *
-          (subcircuit Gadgets.IsZeroField.circuit input[1]).output (offset + 2))
-        (base := offset + 2 + 2 + 2 + 2) h_agree (by omega)
-      have h23 := assignEq_output_eval_stable
-        ((subcircuit Gadgets.IsZeroField.circuit input[2]).output (offset + 2 + 2) *
-          (subcircuit Gadgets.IsZeroField.circuit input[3]).output (offset + 2 + 2 + 2))
-        (base := offset + 2 + 2 + 2 + 2 + 1) h_agree (by omega)
-      simp only [CircuitType.eval_var_field_prover, Expression.eval, h01, h23]
+      simp only [circuit_norm, HasAssignEq.assignEq] at h_agree ⊢
+      rw [h_agree (offset + 2 + 2 + 2 + 2) (by omega),
+        h_agree (offset + 2 + 2 + 2 + 2 + 1) (by omega)]
     · exact equalityFieldSubcircuit_flatStructural_any input _ _ _ env env'
     · trivial
 

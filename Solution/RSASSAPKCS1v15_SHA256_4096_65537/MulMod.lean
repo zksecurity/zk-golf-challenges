@@ -41,13 +41,6 @@ structure Inputs (m : ℕ) (F : Type) where
   modulus : BigInt m F
 deriving ProvableStruct
 
-/-- Natural-number value of a witnessed limb vector under a prover environment,
-little-endian base `2^B`. Used only inside witness generators. -/
-private def evalValue (B : ℕ) (env : ProverEnvironment (F p))
-    (x : Var (BigInt m) (F p)) : ℕ :=
-  Specs.RSA.fromLimbs B ((x.map (Expression.eval env.toEnvironment)).toList.map ZMod.val)
-
-
 /-- Witness the `m·m` partial products `a[i]·b[j]` of two big integers as fresh
 cells and assert each equals the corresponding product, returning the *affine*
 coefficient vector `bigIntMulVars` of the schoolbook convolution.
@@ -57,11 +50,12 @@ row, and the returned coefficient vector is a linear form over the witnessed
 products, so `EqViaCarries` sees only affine inputs. -/
 def witnessedMul (a b : Var (BigInt m) (F p)) :
     Circuit (F p) (Vector (Expression (F p)) (2 * m - 1)) := do
-  -- witness the product matrix pp[i*m+j] = a[i].val * b[j].val
-  let pp ← ProvableType.witness (α := fields (m * m)) fun env =>
-    Vector.ofFn fun t : Fin (m * m) =>
-      (Expression.eval env.toEnvironment (a[t.val / m]'(Nat.div_lt_of_lt_mul t.isLt)))
-        * (Expression.eval env.toEnvironment (b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m))))
+  -- witness the product matrix pp[i*m+j] = a[i].val * b[j].val. The generator is a
+  -- literal witness-IR vector of field products of the input expressions (`Vector.ofFn`
+  -- over `Fin (m*m)` stays one term even with symbolic `m`).
+  let pp ← Circuit.witnessVector (m * m) (.lit (Vector.ofFn fun t : Fin (m * m) =>
+    Witgen.FExpr.mul (.expr (a[t.val / m]'(Nat.div_lt_of_lt_mul t.isLt)))
+      (.expr (b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m))))))
   -- assert each witnessed product equals a[i]*b[j]
   let constraints : Vector (Expression (F p)) (m * m) :=
     Vector.mapFinRange (m * m) fun t =>
@@ -98,7 +92,7 @@ lemma witnessedMul_soundness (off : ℕ) (a b : Var (BigInt m) (F p)) (env : Env
           * Expression.eval env (b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m)))
         = env.get (off + t.val) := by
   simp only [witnessedMul, circuit_norm] at h
-  intro t; have := h t; rw [add_neg_eq_zero] at this; exact this
+  intro t; have := h t; rw [sub_eq_zero] at this; exact this
 
 /-- Per-element eval bridge for the `witnessedMul` output: combining
 `witnessedMul_output` with the map-eval bridge, each coefficient of the output
@@ -138,9 +132,7 @@ lemma witnessedMul_usesLocalWitnesses (off off' : ℕ) (a b : Var (BigInt m) (F 
             * Expression.eval penv.toEnvironment (b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m))) := by
   subst heq
   simp only [witnessedMul, circuit_norm] at h
-  intro t
-  have := h t
-  simpa only [Vector.getElem_ofFn] using this
+  exact h
 
 /-- Completeness reading: if every product witness holds (`env.get (off+t) =
 a[t/m]·b[t%m]`), the `witnessedMul` operations are satisfiable in the sense
@@ -158,6 +150,233 @@ lemma witnessedMul_completeness (off : ℕ) (a b : Var (BigInt m) (F p)) (penv :
   simp only [witnessedMul, circuit_norm]
   intro t; rw [h t]; ring
 
+/-! ## Witness programs for the quotient and the remainder
+
+`q = a·b/n` and `r = a·b%n` are big-integer division, so both come out of the digit
+library: the operands are read into digit registers for free (their limbs are disjoint
+bit windows), multiplied, and divided by binary long division.
+
+The two are separate `witness` operations, so neither can refer to the other's
+`let`-steps and a shared program would have to be spliced into one site, which would
+change the circuit. Each site therefore runs the whole `mulP`/`divmodP` chain and keeps
+one register; the division loop dominates either way.
+
+`qrN` is the pair of registers as a total function of the operands' values, which is
+what keeps the `computableWitnesses` bridges free of side conditions; `lval_qrN` reads
+them back as `a·b/n` and `a·b%n` under the gadget's `Assumptions`.
+
+## Program size at this instance (`m = 34`, `B = 121`, `W = 129`)
+
+`letU` step counts, measured with `#eval (prog #[]).2.size`:
+
+| site | steps |
+|---|---|
+| `MulMod.qWitness` | 10,771,562 |
+| `MulMod.rWitness` | 10,771,562 |
+| `EqViaCarries.carryWitness` (nested) | 2,416,355 |
+| `LessThan.dWitness` (nested) | 645 |
+| `LessThan.cWitness` (nested) | 328,032 |
+| **one `MulMod` subcircuit** | **24,288,156** |
+
+`ModExp` for `e = 65537` unrolls `modExpCount 65537 = 17` `MulMod` subcircuits, so the
+exponentiation's witness program is 17 · 24,288,156 = 412,898,652 steps. The binary long
+division inside `qrProg` dominates (2 · 4096 bits of dividend against a 34 · 121-bit
+modulus); Knuth-D division and reading the remainder off the quotient's registers are
+the obvious follow-ups, and neither changes the circuit.
+-/
+
+section Generator
+open Witgen WitgenNat WitgenBigNat IRLimbs
+
+/-- Digits of an operand register: a normalized `m`-limb value is below `2^(B·m)`. -/
+def opLen (m B : ℕ) : ℕ := numChunks (B * m)
+
+/-- Width of the dividend `a·b`. -/
+def prodBits (m B : ℕ) : ℕ := 2 * (B * m)
+
+/-- Digits of the quotient register. -/
+def quotLen (m B : ℕ) : ℕ := numChunks (prodBits m B)
+
+/-- Digits of the remainder register: one more than the modulus needs. -/
+def remLen (m B : ℕ) : ℕ := opLen m B + 1
+
+/-- Quotient and remainder of `a·b` by `n`, as digit registers. Both witness sites of
+`main` run this: the two are separate `witness` operations, so neither can refer to the
+other's `let`-steps, and a shared program would have to be spliced into one site — which
+would change the circuit. The division loop is the dominant cost either way. -/
+def qrProg (B : ℕ) (a b n : Var (BigInt m) (F p)) :
+    M (F p) (List (U64Expr (F p)) × List (U64Expr (F p))) := do
+  let pr ← mulP (digitsOf B a (opLen m B)) (digitsOf B b (opLen m B))
+  divmodP (digitsOf B n (opLen m B)) pr (quotLen m B) (remLen m B) (prodBits m B)
+
+omit [NeZero m] in
+theorem computesPair_qrProg {B : ℕ} (hB : 0 < B) (a b n : Var (BigInt m) (F p)) :
+    ComputesPair #[] (qrProg B a b n)
+      (fun env => divmod (ofNat (bigVal B n env) (opLen m B))
+        (mul (ofNat (bigVal B a env) (opLen m B)) (ofNat (bigVal B b env) (opLen m B)))
+        (quotLen m B) (remLen m B) (prodBits m B)) := by
+  refine Computes.bind (computesBig_mulP _ _ (evalsBig_digitsOf hB a (opLen m B))
+    (evalsBig_digitsOf hB b (opLen m B))) ?_
+  intro S1 pr hS1 hpr
+  exact computesPair_divmodP _ _ _ _ _ ((evalsBig_digitsOf hB n (opLen m B)).mono hS1) hpr
+
+/-- The quotient witness program. -/
+def qWitness (B : ℕ) (a b n : Var (BigInt m) (F p)) : M (F p) (VExpr (F p) m) := do
+  let qr ← qrProg B a b n
+  Pure.pure (limbsOut qr.1 B m)
+
+/-- The remainder witness program. -/
+def rWitness (B : ℕ) (a b n : Var (BigInt m) (F p)) : M (F p) (VExpr (F p) m) := do
+  let qr ← qrProg B a b n
+  Pure.pure (limbsOut qr.2 B m)
+
+/-- The register a witness site reads, as a total function of the operands' values. -/
+def qrN (B : ℕ) (m : ℕ) (va vb vn : ℕ) : List ℕ × List ℕ :=
+  divmod (ofNat vn (opLen m B)) (mul (ofNat va (opLen m B)) (ofNat vb (opLen m B)))
+    (quotLen m B) (remLen m B) (prodBits m B)
+
+omit [NeZero m] in
+theorem computesV_qWitness {B : ℕ} (hB : 0 < B) (a b n : Var (BigInt m) (F p)) :
+    ComputesV #[] (qWitness B a b n)
+      (fun env => Vector.ofFn fun j : Fin m =>
+        ((lval (qrN B m (bigVal B a env) (bigVal B b env) (bigVal B n env)).1
+          / 2 ^ (B * j.val) % 2 ^ B : ℕ) : F p)) := by
+  refine Computes.bind (computesPair_qrProg hB a b n) ?_
+  intro S1 qr hS1 hqr
+  have h1 : EvalsBig S1 qr.1
+      (fun env => (divmod (ofNat (bigVal B n env) (opLen m B))
+        (mul (ofNat (bigVal B a env) (opLen m B)) (ofNat (bigVal B b env) (opLen m B)))
+        (quotLen m B) (remLen m B) (prodBits m B)).1) := hqr.1
+  exact Computes.pure (evalsV_limbsOut h1 B m)
+
+omit [NeZero m] in
+theorem computesV_rWitness {B : ℕ} (hB : 0 < B) (a b n : Var (BigInt m) (F p)) :
+    ComputesV #[] (rWitness B a b n)
+      (fun env => Vector.ofFn fun j : Fin m =>
+        ((lval (qrN B m (bigVal B a env) (bigVal B b env) (bigVal B n env)).2
+          / 2 ^ (B * j.val) % 2 ^ B : ℕ) : F p)) := by
+  refine Computes.bind (computesPair_qrProg hB a b n) ?_
+  intro S1 qr hS1 hqr
+  have h2 : EvalsBig S1 qr.2
+      (fun env => (divmod (ofNat (bigVal B n env) (opLen m B))
+        (mul (ofNat (bigVal B a env) (opLen m B)) (ofNat (bigVal B b env) (opLen m B)))
+        (quotLen m B) (remLen m B) (prodBits m B)).2) := hqr.2
+  exact Computes.pure (evalsV_limbsOut h2 B m)
+
+/-! ### Reading the registers back -/
+
+omit [NeZero m] in
+/-- Under the gadget's `Assumptions` the two registers really hold `a·b/n` and `a·b%n`. -/
+theorem lval_qrN {B : ℕ} {va vb vn : ℕ} (hvn : 0 < vn)
+    (ha : va < 2 ^ (B * m)) (hb : vb < 2 ^ (B * m)) (hn : vn < 2 ^ (B * m)) :
+    lval (qrN B m va vb vn).1 = va * vb / vn ∧ lval (qrN B m va vb vn).2 = va * vb % vn := by
+  have hop : (2 : ℕ) ^ (B * m) ≤ base ^ opLen m B := by
+    rw [opLen]; exact two_pow_le_base_numChunks _
+  have hva : lval (ofNat va (opLen m B)) = va := lval_ofNat_of_lt (by omega)
+  have hvb : lval (ofNat vb (opLen m B)) = vb := lval_ofNat_of_lt (by omega)
+  have hvn' : lval (ofNat vn (opLen m B)) = vn := lval_ofNat_of_lt (by omega)
+  have hprod : lval (mul (ofNat va (opLen m B)) (ofNat vb (opLen m B))) = va * vb := by
+    rw [lval_mul, hva, hvb]
+  have hbits : va * vb < 2 ^ prodBits m B := by
+    have h1 : va * vb < 2 ^ (B * m) * 2 ^ (B * m) :=
+      Nat.mul_lt_mul_of_lt_of_le ha (le_of_lt hb) (Nat.two_pow_pos _)
+    have h2 : (2 : ℕ) ^ (B * m) * 2 ^ (B * m) = 2 ^ prodBits m B := by
+      rw [← pow_add, prodBits]; congr 1; omega
+    omega
+  obtain ⟨-, -, -, -, h5, h6⟩ :=
+    divmod_spec (ofNat vn (opLen m B))
+      (mul (ofNat va (opLen m B)) (ofNat vb (opLen m B))) (prodBits m B) (quotLen m B)
+      (remLen m B) (bounded_ofNat _ _) (bounded_mul _ _ (bounded_ofNat _ _) (bounded_ofNat _ _))
+      (by rw [hvn']; exact hvn) (by rw [length_ofNat, remLen]; omega)
+      (by rw [hprod]; exact hbits)
+      (by rw [quotLen]; exact two_pow_le_base_numChunks _)
+  rw [qrN]
+  rw [h5, h6, hprod, hvn']
+  exact ⟨rfl, rfl⟩
+
+/-! ### The witness-site bridges -/
+
+omit [NeZero m] in
+/-- Bridge for the quotient witness: under the gadget's `Assumptions` the witnessed cell
+is limb `k` of `a·b / n`. -/
+theorem getElem_eval_qWitness (P : BigIntParams p m) (a b n : Var (BigInt m) (F p))
+    (env : ProverEnvironment (F p)) (k : ℕ) (hk : k < m)
+    (hna : BigInt.Normalized P.B (a.map (Expression.eval env.toEnvironment)))
+    (hnb : BigInt.Normalized P.B (b.map (Expression.eval env.toEnvironment)))
+    (hnn : BigInt.Normalized P.B (n.map (Expression.eval env.toEnvironment)))
+    (hnpos : 0 < BigInt.value P.B (n.map (Expression.eval env.toEnvironment))) :
+    (Witgen.VExpr.eval
+        { env := env, locals := Witgen.evalSteps env (qWitness P.B a b n #[]).2.toList }
+        (qWitness P.B a b n #[]).1)[k]
+      = ((BigInt.value P.B (a.map (Expression.eval env.toEnvironment))
+            * BigInt.value P.B (b.map (Expression.eval env.toEnvironment))
+            / BigInt.value P.B (n.map (Expression.eval env.toEnvironment))
+            / 2 ^ (P.B * k) % 2 ^ P.B : ℕ) : F p) := by
+  rw [IRLimbs.eval_program (computesV_qWitness (by have := P.hB1; omega) a b n) env]
+  simp only [Vector.getElem_ofFn]
+  rw [bigVal_eq_value P.B a env hna, bigVal_eq_value P.B b env hnb,
+    bigVal_eq_value P.B n env hnn,
+    (lval_qrN hnpos (BigInt.value_lt hna) (BigInt.value_lt hnb) (BigInt.value_lt hnn)).1]
+
+omit [NeZero m] in
+/-- Bridge for the remainder witness. -/
+theorem getElem_eval_rWitness (P : BigIntParams p m) (a b n : Var (BigInt m) (F p))
+    (env : ProverEnvironment (F p)) (k : ℕ) (hk : k < m)
+    (hna : BigInt.Normalized P.B (a.map (Expression.eval env.toEnvironment)))
+    (hnb : BigInt.Normalized P.B (b.map (Expression.eval env.toEnvironment)))
+    (hnn : BigInt.Normalized P.B (n.map (Expression.eval env.toEnvironment)))
+    (hnpos : 0 < BigInt.value P.B (n.map (Expression.eval env.toEnvironment))) :
+    (Witgen.VExpr.eval
+        { env := env, locals := Witgen.evalSteps env (rWitness P.B a b n #[]).2.toList }
+        (rWitness P.B a b n #[]).1)[k]
+      = ((BigInt.value P.B (a.map (Expression.eval env.toEnvironment))
+            * BigInt.value P.B (b.map (Expression.eval env.toEnvironment))
+            % BigInt.value P.B (n.map (Expression.eval env.toEnvironment))
+            / 2 ^ (P.B * k) % 2 ^ P.B : ℕ) : F p) := by
+  rw [IRLimbs.eval_program (computesV_rWitness (by have := P.hB1; omega) a b n) env]
+  simp only [Vector.getElem_ofFn]
+  rw [bigVal_eq_value P.B a env hna, bigVal_eq_value P.B b env hnb,
+    bigVal_eq_value P.B n env hnn,
+    (lval_qrN hnpos (BigInt.value_lt hna) (BigInt.value_lt hnb) (BigInt.value_lt hnn)).2]
+
+omit [NeZero m] in
+/-- Both witness programs read the operands only through their evaluated limbs. -/
+theorem eval_toIR_qWitness_congr {B : ℕ} (hB : 0 < B) (a b n : Var (BigInt m) (F p))
+    {env env' : ProverEnvironment (F p)}
+    (ha : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (a[j]'hj)
+      = Expression.eval env'.toEnvironment (a[j]'hj))
+    (hb : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (b[j]'hj)
+      = Expression.eval env'.toEnvironment (b[j]'hj))
+    (hn : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (n[j]'hj)
+      = Expression.eval env'.toEnvironment (n[j]'hj)) :
+    (qWitness B a b n).toIR.eval env = (qWitness B a b n).toIR.eval env' := by
+  rw [IRLimbs.toIR_eq, Witgen.WitgenIR.eval]
+  show Witgen.VExpr.eval { env := env, locals := _ } _
+    = Witgen.VExpr.eval { env := env', locals := _ } _
+  rw [IRLimbs.eval_program (computesV_qWitness hB a b n) env,
+    IRLimbs.eval_program (computesV_qWitness hB a b n) env',
+    bigVal_congr B a ha, bigVal_congr B b hb, bigVal_congr B n hn]
+
+omit [NeZero m] in
+theorem eval_toIR_rWitness_congr {B : ℕ} (hB : 0 < B) (a b n : Var (BigInt m) (F p))
+    {env env' : ProverEnvironment (F p)}
+    (ha : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (a[j]'hj)
+      = Expression.eval env'.toEnvironment (a[j]'hj))
+    (hb : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (b[j]'hj)
+      = Expression.eval env'.toEnvironment (b[j]'hj))
+    (hn : ∀ (j : ℕ) (hj : j < m), Expression.eval env.toEnvironment (n[j]'hj)
+      = Expression.eval env'.toEnvironment (n[j]'hj)) :
+    (rWitness B a b n).toIR.eval env = (rWitness B a b n).toIR.eval env' := by
+  rw [IRLimbs.toIR_eq, Witgen.WitgenIR.eval]
+  show Witgen.VExpr.eval { env := env, locals := _ } _
+    = Witgen.VExpr.eval { env := env', locals := _ } _
+  rw [IRLimbs.eval_program (computesV_rWitness hB a b n) env,
+    IRLimbs.eval_program (computesV_rWitness hB a b n) env',
+    bigVal_congr B a ha, bigVal_congr B b hb, bigVal_congr B n hn]
+
+
+end Generator
+
 /-- The `main` circuit of `MulMod`.
 
 Inputs are a struct with fields `a := input.a`, `b := input.b`,
@@ -173,15 +392,11 @@ def main (P : BigIntParams p m) [Fact (p > 2)]
   let b := input.b
   let n := input.modulus
 
-  -- 1. witness q = (a·b)/n and r = (a·b)%n as BigInt m
-  let q ← ProvableType.witness (α := BigInt m) fun env =>
-    let prod := evalValue P.B env a * evalValue P.B env b
-    let qval : ℕ := prod / evalValue P.B env n
-    Vector.ofFn fun k : Fin m => ((qval / 2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)
-  let r ← ProvableType.witness (α := BigInt m) fun env =>
-    let prod := evalValue P.B env a * evalValue P.B env b
-    let rval : ℕ := prod % evalValue P.B env n
-    Vector.ofFn fun k : Fin m => ((rval / 2 ^ (P.B * k.val) % 2 ^ P.B : ℕ) : F p)
+  -- 1. witness q = (a·b)/n and r = (a·b)%n as BigInt m, out of the digit library: the
+  -- operands are read into digit registers for free, multiplied schoolbook, and divided
+  -- by binary long division.
+  let q ← witnessVectorProgram m (qWitness P.B a b n)
+  let r ← witnessVectorProgram m (rWitness P.B a b n)
 
   -- 2. normalize q and r (subcircuit calls)
   Normalize.circuit P q
@@ -267,31 +482,34 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] :
       obtain ⟨ha_norm, hb_norm, hn_norm, hab_lt, hbb_lt, hn_pos⟩ := h_assumptions
       obtain ⟨hq_norm, hr_norm, hAB_ops, hQN_ops, h_eq_impl, h_lt_impl⟩ := h_holds
       -- fully explicit offsets/outputs: never let Lean `whnf` the `m*m` loop offset
-      have h_pAB := witnessedMul_soundness (i₀ + m + m + m * B + m * B) input_var.a input_var.b env hAB_ops
+      have h_pAB := witnessedMul_soundness (i₀ + m + m + m * B + m * B) input_var_a input_var_b env hAB_ops
       have h_pQN := witnessedMul_soundness
         (i₀ + m + m + m * B + m * B + Operations.localLength
-          (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)
-        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus env hQN_ops
+          (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)
+        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus env hQN_ops
       refine ⟨?_, witnessedMul_requirements _ _ _ _, witnessedMul_requirements _ _ _ _⟩
-      have h_input' : (Vector.map (Expression.eval env) input_var.a,
-          Vector.map (Expression.eval env) input_var.b,
-          Vector.map (Expression.eval env) input_var.modulus)
-            = ((input.a, input.b, input.modulus) :
+      have h_input' : (Vector.map (Expression.eval env) input_var_a,
+          Vector.map (Expression.eval env) input_var_b,
+          Vector.map (Expression.eval env) input_var_modulus)
+            = ((input_a, input_b, input_modulus) :
               ProvablePair (BigInt m) (ProvablePair (BigInt m) (BigInt m)) (F p)) := by
         simp only [← h_input]
       have heqAB_get := witnessedMul_eval_bridge env (i₀ + m + m + m * B + m * B)
-        input_var.a input_var.b h_pAB
+        input_var_a input_var_b h_pAB
       have heqQN_get := witnessedMul_eval_bridge env
         (i₀ + m + m + m * B + m * B + Operations.localLength
-          (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)
-        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus h_pQN
+          (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)
+        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus h_pQN
+      -- 4.33 `circuit_proof_start` rewrites the modulus into its value form; the core
+      -- lemma states the hypothesis symbolically, so put it back.
+      rw [← h_input.2.2] at h_lt_impl
       exact mulMod_soundness_core_wm (B := B) hp i₀ env
-        input_var.a input_var.b input_var.modulus
-        (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).1
-        (witnessedMul (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus
+        input_var_a input_var_b input_var_modulus
+        (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).1
+        (witnessedMul (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus
           (i₀ + m + m + m * B + m * B + Operations.localLength
-            (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)).1
-        (input.a, input.b, input.modulus) h_input' ha_norm hb_norm hn_norm hq_norm hr_norm
+            (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)).1
+        (input_a, input_b, input_modulus) h_input' ha_norm hb_norm hn_norm hq_norm hr_norm
         heqAB_get heqQN_get h_eq_impl h_lt_impl
     completeness := by
       obtain ⟨B, W, hB, hW, hB1, hWB, hWp, hp⟩ := P
@@ -304,87 +522,134 @@ def circuit (P : BigIntParams p m) [Fact (p > 2)] :
       obtain ⟨ha_norm, hb_norm, hn_norm, hab_lt, hbb_lt, hn_pos⟩ := h_assumptions
       obtain ⟨hq_env, hr_env, hAB_uses, hQN_uses⟩ := h_env
       have h_pvAB := witnessedMul_usesLocalWitnesses (i₀ + m + m + m * B + m * B)
-        (i₀ + m + m + m * B + m * B) input_var.a input_var.b env rfl hAB_uses
+        (i₀ + m + m + m * B + m * B) input_var_a input_var_b env rfl hAB_uses
       have h_pvQN := witnessedMul_usesLocalWitnesses
         (i₀ + m + m + m * B + m * B + Operations.localLength
-          (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)
-        (Operations.localLength (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2
+          (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)
+        (Operations.localLength (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2
           + (i₀ + m + m + m * B + m * B))
-        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus env
+        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus env
         (Nat.add_comm _ _) hQN_uses
       have h_pAB : ∀ t : Fin (m * m),
-          Expression.eval env.toEnvironment (input_var.a[t.val / m]'(Nat.div_lt_of_lt_mul t.isLt))
-              * Expression.eval env.toEnvironment (input_var.b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m)))
+          Expression.eval env.toEnvironment (input_var_a[t.val / m]'(Nat.div_lt_of_lt_mul t.isLt))
+              * Expression.eval env.toEnvironment (input_var_b[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m)))
             = env.toEnvironment.get ((i₀ + m + m + m * B + m * B) + t.val) :=
         fun t => (h_pvAB t).symm
       have h_pQN : ∀ t : Fin (m * m),
           Expression.eval env.toEnvironment
               ((Vector.mapRange m fun i => var { index := i₀ + i })[t.val / m]'(Nat.div_lt_of_lt_mul t.isLt))
-              * Expression.eval env.toEnvironment (input_var.modulus[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m)))
+              * Expression.eval env.toEnvironment (input_var_modulus[t.val % m]'(Nat.mod_lt _ (Nat.pos_of_neZero m)))
             = env.toEnvironment.get ((i₀ + m + m + m * B + m * B + Operations.localLength
-                (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2) + t.val) :=
+                (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2) + t.val) :=
         fun t => (h_pvQN t).symm
-      have heva : evalValue B env input_var.a = BigInt.value B input.a := by
-        rw [evalValue, BigInt.value, ← h_input]
-      have hevb : evalValue B env input_var.b = BigInt.value B input.b := by
-        rw [evalValue, BigInt.value, ← h_input]
-      have hevn : evalValue B env input_var.modulus = BigInt.value B input.modulus := by
-        rw [evalValue, BigInt.value, ← h_input]
+      -- the operand denotations, in the shape the two register bridges produce
+      have heva : BigInt.value B (Vector.map (Expression.eval env.toEnvironment) input_var_a)
+          = BigInt.value B input_a := by rw [← h_input.1]
+      have hevb : BigInt.value B (Vector.map (Expression.eval env.toEnvironment) input_var_b)
+          = BigInt.value B input_b := by rw [← h_input.2.1]
+      have hevn : BigInt.value B (Vector.map (Expression.eval env.toEnvironment) input_var_modulus)
+          = BigInt.value B input_modulus := by rw [← h_input.2.2]
+      -- the side conditions of the two witness bridges, in variable form
+      have hna : BigInt.Normalized B (input_var_a.map (Expression.eval env.toEnvironment)) := by
+        rw [h_input.1]; exact ha_norm
+      have hnb : BigInt.Normalized B (input_var_b.map (Expression.eval env.toEnvironment)) := by
+        rw [h_input.2.1]; exact hb_norm
+      have hnn : BigInt.Normalized B
+          (input_var_modulus.map (Expression.eval env.toEnvironment)) := by
+        rw [h_input.2.2]; exact hn_norm
+      have hnpos : 0 < BigInt.value B
+          (input_var_modulus.map (Expression.eval env.toEnvironment)) := by
+        rw [h_input.2.2]; exact hn_pos
+      -- both witnessed cells come out of the shared quotient/remainder registers, so the
+      -- two bridges read them back directly
       have hqwit : ∀ i : Fin m, env.toEnvironment.get (i₀ + i.val)
-          = ((BigInt.value B input.a * BigInt.value B input.b / BigInt.value B input.modulus
+          = ((BigInt.value B input_a * BigInt.value B input_b / BigInt.value B input_modulus
               / 2 ^ (B * i.val) % 2 ^ B : ℕ) : F p) := by
-        intro i; rw [hq_env i, Vector.getElem_ofFn, heva, hevb, hevn]
+        intro i
+        have hq := hq_env i
+        rw [getElem_eval_qWitness ⟨B, W, hB, hW, hB1, hWB, hWp, hp⟩ _ _ _ env i.val i.isLt
+            hna hnb hnn hnpos] at hq
+        rw [hq, heva, hevb, hevn]
       have hrwit : ∀ i : Fin m, env.toEnvironment.get (i₀ + m + i.val)
-          = ((BigInt.value B input.a * BigInt.value B input.b % BigInt.value B input.modulus
+          = ((BigInt.value B input_a * BigInt.value B input_b % BigInt.value B input_modulus
               / 2 ^ (B * i.val) % 2 ^ B : ℕ) : F p) := by
-        intro i; rw [hr_env i, Vector.getElem_ofFn, heva, hevb, hevn]
-      have h_input' : (Vector.map (Expression.eval env.toEnvironment) input_var.a,
-          Vector.map (Expression.eval env.toEnvironment) input_var.b,
-          Vector.map (Expression.eval env.toEnvironment) input_var.modulus)
-            = ((input.a, input.b, input.modulus) :
+        intro i
+        have hr := hr_env i
+        rw [getElem_eval_rWitness ⟨B, W, hB, hW, hB1, hWB, hWp, hp⟩ _ _ _ env i.val i.isLt
+            hna hnb hnn hnpos] at hr
+        rw [hr, heva, hevb, hevn]
+      have h_input' : (Vector.map (Expression.eval env.toEnvironment) input_var_a,
+          Vector.map (Expression.eval env.toEnvironment) input_var_b,
+          Vector.map (Expression.eval env.toEnvironment) input_var_modulus)
+            = ((input_a, input_b, input_modulus) :
               ProvablePair (BigInt m) (ProvablePair (BigInt m) (BigInt m)) (F p)) := by
         simp only [← h_input]
       have heqAB_get := witnessedMul_eval_bridge env.toEnvironment (i₀ + m + m + m * B + m * B)
-        input_var.a input_var.b h_pAB
+        input_var_a input_var_b h_pAB
       have heqQN_get := witnessedMul_eval_bridge env.toEnvironment
         (i₀ + m + m + m * B + m * B + Operations.localLength
-          (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)
-        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus h_pQN
+          (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)
+        (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus h_pQN
       have core := mulMod_completeness_core_wm (B := B) hB hp i₀ env.toEnvironment
-        input_var.a input_var.b input_var.modulus
-        (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).1
-        (witnessedMul (Vector.mapRange m fun i => var { index := i₀ + i }) input_var.modulus
+        input_var_a input_var_b input_var_modulus
+        (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).1
+        (witnessedMul (Vector.mapRange m fun i => var { index := i₀ + i }) input_var_modulus
           (i₀ + m + m + m * B + m * B + Operations.localLength
-            (witnessedMul input_var.a input_var.b (i₀ + m + m + m * B + m * B)).2)).1
-        (input.a, input.b, input.modulus) h_input' ha_norm hb_norm hn_norm hab_lt hbb_lt hn_pos
+            (witnessedMul input_var_a input_var_b (i₀ + m + m + m * B + m * B)).2)).1
+        (input_a, input_b, input_modulus) h_input' ha_norm hb_norm hn_norm hab_lt hbb_lt hn_pos
         hqwit hrwit heqAB_get heqQN_get
+      -- 4.33 `circuit_proof_start` rewrites the modulus into its value form in the goal;
+      -- the core lemma states its conclusion symbolically, so normalize it the same way.
+      have h_core_lt := core.2.2
+      rw [h_input.2.2] at h_core_lt
       -- single explicit `exact` (lazy `.1/.2` projections; no eager `obtain` ⇒ no `whnf` blowup)
       exact ⟨core.1, core.2.1,
-        witnessedMul_completeness (i₀ + m + m + m * B + m * B) input_var.a input_var.b env h_pvAB,
+        witnessedMul_completeness (i₀ + m + m + m * B + m * B) input_var_a input_var_b env h_pvAB,
         witnessedMul_completeness _ (Vector.mapRange m fun i => var { index := i₀ + i })
-          input_var.modulus env h_pvQN,
-        core.2.2⟩
+          input_var_modulus env h_pvQN,
+        h_core_lt⟩
 
 /-! ## Computable witnesses -/
-
-omit [NeZero m] in
-/-- `evalValue` reads a limb vector only through the evaluation of its individual
-limbs; hence it is invariant under environments that agree on those limbs. -/
-private lemma evalValue_congr (B : ℕ) {env env' : ProverEnvironment (F p)}
-    (x : Var (BigInt m) (F p))
-    (h : ∀ j, (hj : j < m) →
-      Expression.eval env.toEnvironment x[j] = Expression.eval env'.toEnvironment x[j]) :
-    evalValue B env x = evalValue B env' x := by
-  simp only [evalValue]
-  have hmap : Vector.map (Expression.eval env.toEnvironment) x
-      = Vector.map (Expression.eval env'.toEnvironment) x := by
-    apply Vector.ext; intro j hj; simp only [Vector.getElem_map]; exact h j hj
-  rw [hmap]
 
 /-- `(witnessedMul a b).localLength off = m * m` in `Circuit.localLength` form. -/
 lemma witnessedMul_circuit_localLength (a b : Var (BigInt m) (F p)) (off : ℕ) :
     (witnessedMul a b).localLength off = m * m :=
   witnessedMul_localLength off a b
+
+omit [NeZero m] in
+/-- Per-field projection of an `eval`-agreement hypothesis on the `Inputs` struct.
+The `Var Inputs` `match` no longer iota-reduces on a struct *variable*, so the
+destructuring has to happen here, once. -/
+lemma eval_inputs_parts {input : Var (Inputs m) (F p)} {env env' : ProverEnvironment (F p)}
+    (h : eval env input = eval env' input) :
+    Vector.map (Expression.eval env.toEnvironment) input.a
+        = Vector.map (Expression.eval env'.toEnvironment) input.a ∧
+      Vector.map (Expression.eval env.toEnvironment) input.b
+        = Vector.map (Expression.eval env'.toEnvironment) input.b ∧
+      Vector.map (Expression.eval env.toEnvironment) input.modulus
+        = Vector.map (Expression.eval env'.toEnvironment) input.modulus := by
+  obtain ⟨a, b, modulus⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+  exact h
+
+omit [NeZero m] in
+/-- Element-wise form of `eval_inputs_parts`. -/
+lemma eval_inputs_getElem {input : Var (Inputs m) (F p)} {env env' : ProverEnvironment (F p)}
+    (h : eval env input = eval env' input) :
+    (∀ j, (hj : j < m) → Expression.eval env.toEnvironment (input.a[j]'hj)
+        = Expression.eval env'.toEnvironment (input.a[j]'hj)) ∧
+      (∀ j, (hj : j < m) → Expression.eval env.toEnvironment (input.b[j]'hj)
+        = Expression.eval env'.toEnvironment (input.b[j]'hj)) ∧
+      (∀ j, (hj : j < m) → Expression.eval env.toEnvironment (input.modulus[j]'hj)
+        = Expression.eval env'.toEnvironment (input.modulus[j]'hj)) := by
+  obtain ⟨hA, hB, hN⟩ := eval_inputs_parts h
+  refine ⟨fun j hj => ?_, fun j hj => ?_, fun j hj => ?_⟩
+  · have hx := congrArg (fun v : Vector (F p) m => v[j]'hj) hA
+    simp only [Vector.getElem_map] at hx; exact hx
+  · have hx := congrArg (fun v : Vector (F p) m => v[j]'hj) hB
+    simp only [Vector.getElem_map] at hx; exact hx
+  · have hx := congrArg (fun v : Vector (F p) m => v[j]'hj) hN
+    simp only [Vector.getElem_map] at hx; exact hx
 
 /-- Structural computable-witness fact for the raw `witnessedMul a b` circuit: its
 only witness is the product matrix `pp`, whose generator reads `a`,`b` through the
@@ -405,12 +670,11 @@ lemma witnessedMul_structuralComputableWitnesses
     Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff,
     Challenge.Utils.ComputableWitnessLemmas.Circuit.pure_structuralComputableWitnesses_iff,
     implies_true, and_true]
-  simp only [circuit_norm]
+  simp only [circuit_norm, explicit_provable_type]
   intro h_agree h_input
   obtain ⟨ha, hb⟩ := hab h_agree (by simp only [circuit_norm]; exact h_input)
-  apply Vector.ext
-  intro t ht
-  simp only [Vector.getElem_ofFn]
+  refine Vector.ext fun t ht => ?_
+  simp only [Vector.getElem_ofFn, circuit_norm]
   rw [ha _ (Nat.div_lt_of_lt_mul ht), hb _ (Nat.mod_lt _ (Nat.pos_of_neZero m))]
 
 omit [NeZero m] in
@@ -495,62 +759,24 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
   unfold main
   simp only [
     Circuit.bind_structuralComputableWitnesses_iff,
+    IRLimbs.witnessVectorProgram_eq_witnessIR,
+    Circuit.witnessIR_structuralComputableWitnesses_iff,
     FormalAssertion.assertion_structuralComputableWitnesses_iff,
     Circuit.pure_structuralComputableWitnesses_iff,
     and_true]
   refine ⟨?wq, ?wr, ?nq, ?nr, ?wab, ?wqn, ?eq, ?lt⟩
   case wq =>
-    simp only [circuit_norm]
     intro _ h_input
-    have ha : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.a[j] = Expression.eval env'.toEnvironment input.a[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.a) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    have hb : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.b[j] = Expression.eval env'.toEnvironment input.b[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.b) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    have hn : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.modulus[j] = Expression.eval env'.toEnvironment input.modulus[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.modulus) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    simp only [evalValue_congr P.B input.a ha, evalValue_congr P.B input.b hb,
-      evalValue_congr P.B input.modulus hn]
+    have h_in : eval env input = eval env' input := by
+      simpa only [circuit_norm] using h_input
+    obtain ⟨ha, hb, hn⟩ := eval_inputs_getElem h_in
+    exact eval_toIR_qWitness_congr (by have := P.hB1; omega) _ _ _ ha hb hn
   case wr =>
-    simp only [circuit_norm]
     intro _ h_input
-    have ha : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.a[j] = Expression.eval env'.toEnvironment input.a[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.a) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    have hb : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.b[j] = Expression.eval env'.toEnvironment input.b[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.b) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    have hn : ∀ j, (hj : j < m) →
-        Expression.eval env.toEnvironment input.modulus[j] = Expression.eval env'.toEnvironment input.modulus[j] := by
-      intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.modulus) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    simp only [evalValue_congr P.B input.a ha, evalValue_congr P.B input.b hb,
-      evalValue_congr P.B input.modulus hn]
+    have h_in : eval env input = eval env' input := by
+      simpa only [circuit_norm] using h_input
+    obtain ⟨ha, hb, hn⟩ := eval_inputs_getElem h_in
+    exact eval_toIR_rWitness_congr (by have := P.hB1; omega) _ _ _ ha hb hn
   case nq =>
     refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
       (Normalize.circuit P) input _ _ ?_ (Normalize.computableWitnesses P) env env'
@@ -570,17 +796,8 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
   case wab =>
     refine witnessedMul_structuralComputableWitnesses input _ _ _ env env' ?_
     intro _ h_input
-    constructor
-    · intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.a) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
-    · intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.b) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
+    obtain ⟨ha, hb, _⟩ := eval_inputs_getElem h_input
+    exact ⟨ha, hb⟩
   case wqn =>
     refine witnessedMul_structuralComputableWitnesses input _ _ _ env env' ?_
     intro h_agree h_input
@@ -589,11 +806,7 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
     · intro j hj
       simp only [circuit_norm]
       exact h_agree (offset + j) (by omega)
-    · intro j hj
-      have hm := congrArg (fun s : Inputs m (F p) => s.modulus) h_input
-      simp only [circuit_norm] at hm
-      have := congrArg (fun v : Vector (F p) m => v[j]'hj) hm
-      simpa [Vector.getElem_map] using this
+    · exact (eval_inputs_getElem h_input).2.2
   case eq =>
     refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
       (EqViaCarries.circuit P) input _ _ ?_ (EqViaCarries.computableWitnesses P) env env'
@@ -612,7 +825,7 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
     have hS := map_eval_sMix_agree (offset + m) _ hSqn hr
     simp only [circuit_norm, witnessedMul_output, witnessedMul_circuit_localLength,
       Normalize.circuit, Normalize.elaborated, Normalize.main, Gadgets.ToBits.rangeCheck]
-    rw [hPc, hS]
+    exact ⟨hPc, hS⟩
   case lt =>
     refine FormalAssertion.assertion_flatStructuralComputableWitnesses_of_condition
       (LessThan.circuit P) input _ _ ?_ (LessThan.computableWitnesses P) env env'
@@ -621,11 +834,10 @@ theorem computableWitnesses (P : BigIntParams p m) [Fact (p > 2)] :
       simp only [circuit_norm, witnessedMul_circuit_localLength] at hle; omega
     have hr := map_eval_varFromOffset_agree (off := offset + m) h_agree (by omega)
     have hn : Vector.map (Expression.eval e1.toEnvironment) input.modulus
-        = Vector.map (Expression.eval e2.toEnvironment) input.modulus := by
-      have := congrArg (fun s : Inputs m (F p) => s.modulus) h_input
-      simpa [circuit_norm] using this
+        = Vector.map (Expression.eval e2.toEnvironment) input.modulus :=
+      (eval_inputs_parts h_input).2.2
     simp only [circuit_norm]
-    rw [hr, hn]
+    exact ⟨hr, hn⟩
 
 /-- The `MulMod` output is `r`, the remainder witness block at `offset + m`. Each
 of its cells is invariant under environments agreeing below the whole circuit
@@ -659,6 +871,16 @@ lemma eval_output_of_agreesBelow {offset : ℕ} {env env' : ProverEnvironment (F
   rw [hout]
   simp only [circuit_norm]
   exact map_eval_varFromOffset_agree h_agree (by omega)
+
+/-! ## Sealing the witness programs
+
+The programs are *data*, and big data: `circuit_norm` and any `rfl` that reaches a
+circuit's `localLength` would otherwise start evaluating them, since the digit lists
+are `map`s over `List.range` and the digit programs are ordinary recursions over
+those. Downstream files reason through the bridges above instead.
+-/
+
+attribute [irreducible] qWitness rWitness
 
 end MulMod
 

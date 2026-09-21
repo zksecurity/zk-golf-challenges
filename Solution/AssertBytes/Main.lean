@@ -2,6 +2,7 @@ import Challenge.Instances.AssertBytes.Interface
 import Solution.AssertBytes.Num2Bits
 import Solution.AssertBytes.Cost
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 
 /-!
 # Baseline `AssertBytes` solution
@@ -47,7 +48,7 @@ theorem computableWitness : ∀ n input,
   Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct :
       Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.StructuralComputableWitnesses
         input env env' n ((main input).operations n) := by
@@ -61,7 +62,8 @@ theorem computableWitness : ∀ n input,
         intro k e1 e2 _ _ h_input
         have h_buffer : (eval e1 input).buffer[i.val] = (eval e2 input).buffer[i.val] := by
           rw [h_input]
-        simpa [circuit_norm] using h_buffer)
+        obtain ⟨b⟩ := input
+        simpa [circuit_norm, explicit_provable_type] using h_buffer)
       (Num2Bits.computableWitnesses 8) env env'
   -- bridge the structural condition to the target `forAllFlat`, using `hinput`
   have hflat :=
@@ -70,7 +72,7 @@ theorem computableWitness : ∀ n input,
   unfold Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F circomPrime) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F circomPrime) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F circomPrime))) (off : ℕ),
       n ≤ off →
@@ -115,14 +117,20 @@ attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperat
 
 theorem affineW_input_buffer (input : Var Input (F circomPrime)) (hinput : AffineProvable input) :
     AffineW input.buffer := by
+  obtain ⟨b⟩ := input
   intro i hi
-  simpa [AffineProvable] using hinput i hi
+  have h := hinput i hi
+  simp only [circuit_norm, explicit_provable_type] at h
+  exact h
 
 theorem mainCost :
     circuitCost main ⟨allocations, constraints⟩ :=
   fun input =>
     show CostIs (main input) ⟨allocations, constraints⟩ from
       CostIs.forEach (fun a n => costIs_assertion_num2Bits 8 a n)
+
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main :=
+  fun _ => Challenge.WitgenIR.UsesIRCirc.forEach fun a n => usesIR_assertion_num2Bits 8 a n
 
 theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   isR1CS_of_IsR1CSCirc
@@ -132,5 +140,17 @@ theorem isR1CS : Challenge.CostR1CS.isR1CS main :=
   (fun _ _ => affineOutput_unit _)
 
 end
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.AssertBytes

@@ -1,5 +1,6 @@
 import Solution.Blake3CompressGF2Canonical.Circuit
 import Challenge.Utils.CostR1CSCanonical
+import Challenge.Utils.WitgenIR
 
 /-!
 # Cost and ordered identity-C certificates
@@ -21,11 +22,11 @@ namespace Add32Canon
 
 open Add32 (at32 at31 carryE Inputs)
 
-theorem at31_wv (c : ProverEnvironment (F p2) → Vector (F p2) 31) (w i : ℕ) :
-    at31 ((Circuit.witnessVector 31 c).output w) i = Expression.var ⟨w + i % 31⟩ := by
-  show ((Circuit.witnessVector 31 c).output w)[i % 31]'(Nat.mod_lt _ (by norm_num)) = _
-  rw [show (Circuit.witnessVector 31 c).output w = varFromOffset (fields 31) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+theorem at31_wv (out : Witgen.VExpr (F p2) 31) (w i : ℕ) :
+    at31 ((Circuit.witnessVector 31 out).output w) i = Expression.var ⟨w + i % 31⟩ := by
+  show ((Circuit.witnessVector 31 out).output w)[i % 31]'(Nat.mod_lt _ (by norm_num)) = _
+  rw [show (Circuit.witnessVector 31 out).output w = varFromOffset (fields 31) w from rfl]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange]
 
 theorem carryE_affine {carries : Var (fields 31) (F p2)} (hc : AffineW carries) (i : ℕ) :
     Affine (carryE carries i) := by
@@ -109,11 +110,11 @@ theorem balanced_sub (b : Var Inputs (F p2)) :
 
 end Add32Canon
 
-theorem wv_getElem {n : ℕ} (c : ProverEnvironment (F p2) → Vector (F p2) n)
+theorem wv_getElem {n : ℕ} (out : Witgen.VExpr (F p2) n)
     (w i : ℕ) (hi : i < n) :
-    ((Circuit.witnessVector n c).output w)[i]'hi = Expression.var ⟨w + i⟩ := by
-  rw [show (Circuit.witnessVector n c).output w = varFromOffset (fields n) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+    ((Circuit.witnessVector n out).output w)[i]'hi = Expression.var ⟨w + i⟩ := by
+  rw [show (Circuit.witnessVector n out).output w = varFromOffset (fields n) w from rfl]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange]
 
 namespace Pin32Canon
 
@@ -532,6 +533,276 @@ theorem balanced_sub (x : Var Inputs (F p2)) :
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end Finalize
+
+/-! ## Witness-IR certificates
+
+One `UsesIRCirc` lemma per gadget, mirroring the `CostIs` skeletons above: the three
+witness sites (the canonical adder's products and carries, and the two pin sizes) are
+discharged by `UsesIRCirc.witnessVector`, every non-witness operation is structural,
+and each composite gadget consumes its children through `UsesIRCirc.subcircuit`. -/
+section WitgenIR
+
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the certificates: otherwise the
+-- unifier whnf's `operationsUseIR` on the flattened operation list and times out.
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+namespace Add32Canon
+
+open Add32 (Inputs)
+
+/-- Both witness sites (31 products, then 31 carries) are IR programs. -/
+theorem usesIR_main (b : Var Inputs (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 31 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.witnessVector 31 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+    UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var Inputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end Add32Canon
+
+namespace Pin32Canon
+
+theorem usesIR_main (b : Var (fields 32) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 32) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end Pin32Canon
+
+namespace PinStateCanon
+
+theorem usesIR_main (b : Var (fields 512) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 512 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 512) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end PinStateCanon
+
+namespace AddExact
+
+theorem usesIR_main (b : Var Add32.Inputs (F p2)) : UsesIRCirc (main b) :=
+  UsesIRCirc.bind (Add32Canon.usesIR_sub b) fun _ => Pin32Canon.usesIR_sub _
+
+theorem usesIR_sub (b : Var Add32.Inputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end AddExact
+
+namespace XorRotateExact
+
+theorem usesIR_main (n : ℕ) (b : Var Inputs (F p2)) : UsesIRCirc (main n b) :=
+  Pin32Canon.usesIR_sub _
+
+theorem usesIR_sub (n : ℕ) (b : Var Inputs (F p2)) :
+    UsesIRCirc (subcircuit (circuit n) b) :=
+  UsesIRCirc.subcircuit (fun k => usesIR_main n b k)
+
+end XorRotateExact
+
+namespace PinQuadExact
+
+theorem usesIR_main (b : Var Quad (F p2)) : UsesIRCirc (main b) :=
+  UsesIRCirc.bind (Pin32Canon.usesIR_sub b.a) fun _ =>
+  UsesIRCirc.bind (Pin32Canon.usesIR_sub b.b) fun _ =>
+  UsesIRCirc.bind (Pin32Canon.usesIR_sub b.c) fun _ =>
+  UsesIRCirc.bind (Pin32Canon.usesIR_sub b.d) fun _ =>
+  UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var Quad (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end PinQuadExact
+
+namespace GFirst
+
+theorem usesIR_main (b : Var GInputs (F p2)) : UsesIRCirc (main b) :=
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (XorRotateExact.usesIR_sub 16 _) fun _ =>
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (XorRotateExact.usesIR_sub 12 _) fun _ =>
+  PinQuadExact.usesIR_sub _
+
+theorem usesIR_sub (b : Var GInputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end GFirst
+
+namespace GSecond
+
+theorem usesIR_main (b : Var GInputs (F p2)) : UsesIRCirc (main b) :=
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (XorRotateExact.usesIR_sub 8 _) fun _ =>
+  UsesIRCirc.bind (AddExact.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (XorRotateExact.usesIR_sub 7 _) fun _ =>
+  PinQuadExact.usesIR_sub _
+
+theorem usesIR_sub (b : Var GInputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end GSecond
+
+namespace G
+
+theorem usesIR_main (b : Var GInputs (F p2)) : UsesIRCirc (main b) :=
+  UsesIRCirc.bind (GFirst.usesIR_sub b) fun _ => GSecond.usesIR_sub _
+
+theorem usesIR_sub (b : Var GInputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end G
+
+namespace ApplyG
+
+theorem usesIR_main (a b c d : Fin 16) (x : Var Inputs (F p2)) :
+    UsesIRCirc (main a b c d x) :=
+  UsesIRCirc.bind (G.usesIR_sub _) fun _ => PinStateCanon.usesIR_sub _
+
+theorem usesIR_sub (a b c d : Fin 16) (x : Var Inputs (F p2)) :
+    UsesIRCirc (subcircuit (circuit a b c d) x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main a b c d x n)
+
+end ApplyG
+
+namespace Round.Pair
+
+theorem usesIR_main
+    (a0 b0 c0 d0 mx0 my0 a1 b1 c1 d1 mx1 my1 : Fin 16)
+    (x : Var Round.Inputs (F p2)) :
+    UsesIRCirc (main a0 b0 c0 d0 mx0 my0 a1 b1 c1 d1 mx1 my1 x) :=
+  UsesIRCirc.bind (ApplyG.usesIR_sub _ _ _ _ _) fun _ =>
+  ApplyG.usesIR_sub _ _ _ _ _
+
+theorem usesIR_sub
+    (a0 b0 c0 d0 mx0 my0 a1 b1 c1 d1 mx1 my1 : Fin 16)
+    (x : Var Round.Inputs (F p2)) :
+    UsesIRCirc (subcircuit (circuit a0 b0 c0 d0 mx0 my0 a1 b1 c1 d1 mx1 my1) x) :=
+  UsesIRCirc.subcircuit (fun n =>
+    usesIR_main a0 b0 c0 d0 mx0 my0 a1 b1 c1 d1 mx1 my1 x n)
+
+end Round.Pair
+
+namespace Round.Columns
+
+theorem usesIR_main (x : Var Round.Inputs (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Round.Pair.usesIR_sub _ _ _ _ _ _ _ _ _ _ _ _ x) fun _ =>
+  Round.Pair.usesIR_sub _ _ _ _ _ _ _ _ _ _ _ _ _
+
+theorem usesIR_sub (x : Var Round.Inputs (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Round.Columns
+
+namespace Round.Diagonals
+
+theorem usesIR_main (x : Var Round.Inputs (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Round.Pair.usesIR_sub _ _ _ _ _ _ _ _ _ _ _ _ x) fun _ =>
+  Round.Pair.usesIR_sub _ _ _ _ _ _ _ _ _ _ _ _ _
+
+theorem usesIR_sub (x : Var Round.Inputs (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Round.Diagonals
+
+namespace Round
+
+theorem usesIR_main (x : Var Inputs (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Columns.usesIR_sub x) fun _ => Diagonals.usesIR_sub _
+
+theorem usesIR_sub (x : Var Inputs (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Round
+
+namespace Prepare
+
+theorem usesIR_main (x : Var Input (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (PinStateCanon.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (PinStateCanon.usesIR_sub _) fun _ =>
+  UsesIRCirc.pure _
+
+theorem usesIR_sub (x : Var Input (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Prepare
+
+namespace Step
+
+theorem usesIR_main (x : Var Config (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Round.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (PinStateCanon.usesIR_sub _) fun _ =>
+  UsesIRCirc.pure _
+
+theorem usesIR_sub (x : Var Config (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Step
+
+namespace Steps2
+
+theorem usesIR_main (x : Var Config (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Step.usesIR_sub x) fun _ => Step.usesIR_sub _
+
+theorem usesIR_sub (x : Var Config (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Steps2
+
+namespace Steps4
+
+theorem usesIR_main (x : Var Config (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Steps2.usesIR_sub x) fun _ => Steps2.usesIR_sub _
+
+theorem usesIR_sub (x : Var Config (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Steps4
+
+namespace Steps7
+
+theorem usesIR_main (x : Var Config (F p2)) : UsesIRCirc (main x) :=
+  UsesIRCirc.bind (Steps4.usesIR_sub x) fun _ =>
+  UsesIRCirc.bind (Steps2.usesIR_sub _) fun _ =>
+  Step.usesIR_sub _
+
+theorem usesIR_sub (x : Var Config (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Steps7
+
+namespace Finalize
+
+theorem usesIR_main (x : Var Inputs (F p2)) : UsesIRCirc (main x) :=
+  PinStateCanon.usesIR_sub _
+
+theorem usesIR_sub (x : Var Inputs (F p2)) : UsesIRCirc (subcircuit circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main x n)
+
+end Finalize
+
+/-- Every witness in the composed BLAKE3 compression circuit is IR-backed. -/
+theorem witgenIsIRInternal : Challenge.WitgenIR.witgenIsIR main := fun input =>
+  UsesIRCirc.bind (Prepare.usesIR_sub input) fun _ =>
+  UsesIRCirc.bind (Steps7.usesIR_sub _) fun _ =>
+  UsesIRCirc.bind (Finalize.usesIR_sub _) fun _ =>
+  UsesIRCirc.pure _
+
+end WitgenIR
 
 theorem mainCostInternal :
     Challenge.CostR1CS.circuitCost main ⟨86880, 86880⟩ := by

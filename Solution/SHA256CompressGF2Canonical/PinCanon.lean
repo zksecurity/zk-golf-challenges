@@ -20,10 +20,12 @@ open Challenge.CostR1CS
 
 namespace Pin32Canon
 
-/-- Materialize 32 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`. -/
+/-- Materialize 32 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`.
+
+The witness program is the same literal vector of `b32 v i` expressions as `Pin32`. -/
 def main (v : Var (fields 32) (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
-  let w ← witnessVector 32 (fun env => Vector.ofFn fun i : Fin 32 =>
-    (b32 v i.val).eval env)
+  let w ← Circuit.witnessVector 32
+    (.lit <| .ofFn fun i : Fin 32 => Witgen.FExpr.expr (b32 v i.val))
   Circuit.forEach (Vector.finRange 32) (fun i =>
     assertZero (w[i.val]'i.isLt - b32 v i.val * 1))
   return w
@@ -50,7 +52,6 @@ theorem completeness : Completeness (F p2) main Pin32.Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 32) (fields 32) :=
@@ -78,7 +79,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, b32, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `b32` expression, so it reads only the input
+    simp only [b32, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 
@@ -101,10 +103,12 @@ end Pin32Canon
 
 namespace Pin256Canon
 
-/-- Materialize 256 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`. -/
+/-- Materialize 256 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`.
+
+The witness program is the same literal vector of `b256 v i` expressions as `Pin256`. -/
 def main (v : Var (fields 256) (F p2)) : Circuit (F p2) (Var (fields 256) (F p2)) := do
-  let w ← witnessVector 256 (fun env => Vector.ofFn fun i : Fin 256 =>
-    (b256 v i.val).eval env)
+  let w ← Circuit.witnessVector 256
+    (.lit <| .ofFn fun i : Fin 256 => Witgen.FExpr.expr (b256 v i.val))
   Circuit.forEach (Vector.finRange 256) (fun i =>
     assertZero (w[i.val]'i.isLt - b256 v i.val * 1))
   return w
@@ -131,7 +135,6 @@ theorem completeness : Completeness (F p2) main Pin256.Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 256) (fields 256) :=
@@ -159,7 +162,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, b256, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `b256` expression, so it reads only the input
+    simp only [b256, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 

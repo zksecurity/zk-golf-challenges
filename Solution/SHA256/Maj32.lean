@@ -26,15 +26,19 @@ namespace Maj32
     Decomposition: let t = a·b; then maj = t + c·(a + b − 2·t).
     Two R1CS constraints per bit:
       (1)  a·b = t
-      (2)  c·(a + b − 2·t) = z − t -/
+      (2)  c·(a + b − 2·t) = z − t
+
+    Both witness programs are literal vectors of those same per-bit field expressions
+    (the second one reads the already-witnessed product variables `t` back as circuit
+    expressions), so `completeness` and `computableWitnesses` read the witnessed cells
+    back in exactly that form. -/
 def maj32 (a b c : Var (fields 32) (F p)) : Circuit (F p) (Var (fields 32) (F p)) := do
   -- Witness the intermediate product t[i] = a[i] * b[i]
-  let t ← witnessVector 32 fun env =>
-    Vector.ofFn fun (i : Fin 32) => env a[i] * env b[i]
+  let t ← Circuit.witnessVector 32
+    (.lit <| .ofFn fun i : Fin 32 => (↑a[i.val] * ↑b[i.val] : Witgen.FExpr (F p)))
   -- Witness the majority output
-  let z ← witnessVector 32 fun env =>
-    Vector.ofFn fun (i : Fin 32) =>
-      env t[i] + env c[i] * (env a[i] + env b[i] - 2 * env t[i])
+  let z ← Circuit.witnessVector 32 (.lit <| .ofFn fun i : Fin 32 =>
+    (↑t[i.val] + ↑c[i.val] * (↑a[i.val] + ↑b[i.val] - 2 * ↑t[i.val]) : Witgen.FExpr (F p)))
   -- Constraint (1): t[i] = a[i] * b[i]
   Circuit.forEach (Vector.finRange 32) fun i =>
     assertZero (t[i] - a[i] * b[i])
@@ -91,7 +95,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
   have h_t : ∀ i : Fin 32, env.get (i₀ + i.val) = input_a[i] * input_b[i] := by
     intro i
     have := h_holds_t i; rw [h_ai i, h_bi i] at this
-    exact sub_eq_zero.mp (by rw [sub_eq_add_neg]; exact this)
+    exact sub_eq_zero.mp this
   -- z[i] = t[i] + c[i] * (a[i] + b[i] - 2 * t[i])
   have h_z : ∀ i : Fin 32, env.get (i₀ + 32 + i.val) =
       input_a[i] * input_b[i] + input_c[i] * (input_a[i] + input_b[i] - 2 * (input_a[i] * input_b[i])) := by
@@ -110,12 +114,12 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [maj32]
+  -- both witness programs are literal vectors, so `circuit_proof_start` already reads
+  -- the witnessed cells back in the intended form
   refine ⟨fun i => ?_, fun i => ?_⟩
   · have := (h_env.1) i
-    simp only [Vector.getElem_ofFn] at this
     rw [this]; ring
   · have := (h_env.2.1) i
-    simp only [Vector.getElem_ofFn] at this
     rw [this]; ring
 
 def circuit : FormalCircuit (F p) Inputs (fields 32) where
@@ -138,38 +142,43 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
+    obtain ⟨ia, ib, ic⟩ := input
     simp [circuit_norm] at h_input
     apply Vector.ext
     intro i hi
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal product, so it reads only the two input bits
+    simp only [circuit_norm]
     have ha :
-        Expression.eval env.toEnvironment input.a[i] =
-          Expression.eval env'.toEnvironment input.a[i] :=
+        Expression.eval env.toEnvironment ia[i] =
+          Expression.eval env'.toEnvironment ia[i] :=
       h_input.1 _ (by simp)
     have hb :
-        Expression.eval env.toEnvironment input.b[i] =
-          Expression.eval env'.toEnvironment input.b[i] :=
+        Expression.eval env.toEnvironment ib[i] =
+          Expression.eval env'.toEnvironment ib[i] :=
       h_input.2.1 _ (by simp)
     simp [ha, hb]
   · intro h_agree h_input
+    obtain ⟨ia, ib, ic⟩ := input
     simp [circuit_norm] at h_input
-    simp [Circuit.witnessVector, circuit_norm] at h_agree ⊢
+    simp [circuit_norm] at h_agree
     apply Vector.ext
     intro i hi
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal expression, so it reads only the inputs and
+    -- the product cells
+    simp only [circuit_norm]
     have ht : env.get (offset + i) = env'.get (offset + i) :=
       h_agree (offset + i) (by omega)
     have ha :
-        Expression.eval env.toEnvironment input.a[i] =
-          Expression.eval env'.toEnvironment input.a[i] :=
+        Expression.eval env.toEnvironment ia[i] =
+          Expression.eval env'.toEnvironment ia[i] :=
       h_input.1 _ (by simp)
     have hb :
-        Expression.eval env.toEnvironment input.b[i] =
-          Expression.eval env'.toEnvironment input.b[i] :=
+        Expression.eval env.toEnvironment ib[i] =
+          Expression.eval env'.toEnvironment ib[i] :=
       h_input.2.1 _ (by simp)
     have hc :
-        Expression.eval env.toEnvironment input.c[i] =
-          Expression.eval env'.toEnvironment input.c[i] :=
+        Expression.eval env.toEnvironment ic[i] =
+          Expression.eval env'.toEnvironment ic[i] :=
       h_input.2.2 _ (by simp)
     simp [ht, ha, hb, hc]
   · intro _

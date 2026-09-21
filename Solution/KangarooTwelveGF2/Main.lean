@@ -1,6 +1,7 @@
 import Solution.KangarooTwelveGF2.Round
 import Solution.KangarooTwelveGF2.MainTheorems
 import Solution.KangarooTwelveGF2.Cost
+import Challenge.Utils.WitgenIR
 
 namespace Solution.KangarooTwelveGF2
 
@@ -74,6 +75,31 @@ theorem mainCost :
             + (⟨1600, 1600⟩ + (⟨1600, 1600⟩ + (⟨1600, 1600⟩ + (⟨1600, 1600⟩
             + (⟨1600, 1600⟩ + ⟨0, 0⟩)))))))))))))
 
+section WitgenIR
+
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the per-round certificates
+-- (see `Cost.lean`).
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.bind (Cost.usesIR_sub _ _) fun _ =>
+  UsesIRCirc.pure _
+
+end WitgenIR
+
 section ComputableWitness
 
 open Challenge.Utils.ComputableWitnessLemmas
@@ -84,7 +110,7 @@ theorem computableWitness : ∀ n input,
     Circuit.ComputableWitnesses (main input) n := by
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct : FormalCircuitBase.Operations.StructuralComputableWitnesses
       input env env' n ((main input).operations n) := by
     unfold main
@@ -214,7 +240,7 @@ theorem computableWitness : ∀ n input,
   unfold FormalCircuitBase.computableWitnessCondition at hflat
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F p2) :=
-    { witness := fun k _ compute => env.AgreesBelow k env' → compute env = compute env' }
+    { witness := fun k _ compute => env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F p2) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F p2))) (off : ℕ),
       n ≤ off →
@@ -279,7 +305,6 @@ theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main :=
     refine IsCidCirc.bind (Cost.isCidentity_sub _ _ hs11) (Cost.balanced_sub _ _) fun _ => ?_
     exact IsCidCirc.pure _)
   (fun input hinput n => by
-    intro i hi
     have houtput : AffineW ((main input).output n).state := by
       have hs0 : AffineW input.state := Cost.affineW_input_state hinput
       simp only [main, Circuit.bind_output_eq, Circuit.pure_output_eq]
@@ -296,10 +321,18 @@ theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main :=
       apply Cost.affineW_subOut
       apply Cost.affineW_subOut
       exact hs0
-    have hiState : i < permutationBits := by
-      have hsz : size Output = permutationBits := rfl
-      omega
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using
-      houtput i hiState)
+    exact Cost.affineProvable_output houtput)
+
+/-- Channel accounting: `main` performs no channel interaction and every gadget it
+invokes declares no requirement channel, so it is channel-lawful for the elaborated
+guarantee channels and no requirement channel. This is the `FormalCircuitBase`
+field's default tactic. -/
+theorem requirementsChannelsLawful : ∀ input offset,
+    ((main input).operations offset).RequirementsChannelsLawful
+      elaborated.channelsWithGuarantees [] := by
+  intro input offset
+  simp only [main, circuit_norm, seval]
+  unfold_formal_circuit_consts
+  simp only [circuit_norm, seval]
 
 end Solution.KangarooTwelveGF2

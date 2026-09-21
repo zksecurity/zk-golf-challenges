@@ -149,6 +149,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         CheckLenFlags.circuit input ⟨input.messageLen, input.lenFlags⟩ _
         (by
           intro env env' h_input
+          obtain ⟨iml, imsg, ifl, ipd⟩ := input
           simp [circuit_norm] at h_input ⊢
           exact ⟨h_input.1, h_input.2.2.1⟩)
         h_lenFlags env env'
@@ -158,6 +159,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         _
         (by
           intro env env' h_input
+          obtain ⟨iml, imsg, ifl, ipd⟩ := input
           simp [circuit_norm] at h_input ⊢
           exact h_input.2.2.2)
         h_bits env env'
@@ -168,6 +170,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         (CheckPaddedByte.circuit byteIndex) input
         ⟨input.messageLen, input.message, input.lenFlags, paddedWord input.padded byteIndex⟩
       · intro env env' h_input
+        obtain ⟨iml, imsg, ifl, ipd⟩ := input
         simp [circuit_norm] at h_input ⊢
         refine ⟨h_input.1, h_input.2.1, h_input.2.2.1, ?_⟩
         intro a ha

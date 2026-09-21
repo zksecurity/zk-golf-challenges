@@ -144,7 +144,6 @@ theorem guarded_limb_sum_lt (env : Environment (F circomPrime))
       else 0)
     (by
       intro t
-      dsimp only
       by_cases h : 121 * k + (t : ℕ) < 4096
       · rw [dif_pos h]
         simpa using hbool (121 * k + (t : ℕ)) (by simpa using h)
@@ -594,7 +593,7 @@ theorem emBits_byteConsistent (env : Environment (F circomPrime))
     exact (sum_bits_eq (emByteConst j) 8 (emByteConst_lt j)).symm
   · -- Digest region.
     rw [if_neg hcase]
-    push_neg at hcase
+    push Not at hcase
     have hdj : j - 480 < 32 := by omega
     rw [hdig (j - 480) hdj]
     apply Finset.sum_congr rfl
@@ -632,7 +631,7 @@ open Specs.RSASSAPKCS1v15.HashAlgorithm in
 theorem digestInfoPrefix_sha256_eq_derPrefix :
     (Specs.RSASSAPKCS1v15.HashAlgorithm.digestInfoPrefix
       Specs.RSASSAPKCS1v15.HashAlgorithm.sha256) = derPrefix := by
-  decide
+  rfl
 
 /-- The spec-shaped EM byte vector for a digest `dnat : Vector ℕ 32`. -/
 def emVec (dnat : Vector ℕ 32) : Vector ℕ 512 :=
@@ -640,8 +639,7 @@ def emVec (dnat : Vector ℕ 32) : Vector ℕ 512 :=
     ((#v[0x00, 0x01] : Vector ℕ 2) ++
       Vector.replicate 458 0xff ++
       (#v[0x00] : Vector ℕ 1) ++
-      ((Specs.RSASSAPKCS1v15.HashAlgorithm.digestInfoPrefix
-        Specs.RSASSAPKCS1v15.HashAlgorithm.sha256) ++ dnat))
+      (derPrefix ++ dnat))
 
 /-- The constant EM byte at `j < 480` equals the corresponding entry of the
 spec-shaped EM byte vector (the digest tail being irrelevant for `j < 480`). -/
@@ -651,7 +649,6 @@ theorem emVec_getElem (dnat : Vector ℕ 32) (j : ℕ) (hj : j < 512) :
   unfold emVec
   rw [Vector.getElem_cast]
   rw [Vector.getElem_append]
-  rw [digestInfoPrefix_sha256_eq_derPrefix]
   by_cases hj480 : j < 480
   · rw [if_pos hj480]
     -- inside the `(... ++ ... ++ #v[0]) ++ (derPrefix ++ dnat)` left part (length 461)
@@ -673,14 +670,12 @@ theorem emVec_getElem (dnat : Vector ℕ 32) (j : ℕ) (hj : j < 512) :
         subst hje
         rfl
     · rw [dif_neg hlt461]
-      simp only [Specs.RSASSAPKCS1v15.HashAlgorithm.digestInfoPrefixLength] at *
       rw [Vector.getElem_append_left (show j - (2 + 458 + 1) < 19 by omega)]
       unfold emByteConst
       rw [if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega),
           if_pos (by omega), dif_pos (show j - 461 < 19 by omega)]
   · rw [if_neg hj480]
     rw [dif_neg (show ¬ j < 2 + 458 + 1 by omega)]
-    simp only [Specs.RSASSAPKCS1v15.HashAlgorithm.digestInfoPrefixLength] at *
     rw [Vector.getElem_append_right (by omega) (show 19 ≤ j - (2 + 458 + 1) by omega)]
     simp only [show j - (2 + 458 + 1) - 19 = j - 480 from by omega]
 
@@ -838,7 +833,6 @@ theorem os2ip_digit (xs : Vector ℕ 512) (hoct : IsOctetString xs) (i : ℕ) (h
   rw [hsum]
   have hext := digit_extract 8 (fun j => if h : 511 - j < 512 then xs[511 - j]'h else 0) hf 512
     (511 - i) (by omega)
-  simp only at hext
   rw [show (256 : ℕ) = 2 ^ 8 from rfl, ← pow_mul]
   rw [hext, dif_pos (show 511 - (511 - i) < 512 from by omega)]
   exact getElem_congr_idx (show 511 - (511 - i) = i from by omega)

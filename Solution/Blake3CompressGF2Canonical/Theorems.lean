@@ -39,7 +39,6 @@ theorem toNat_eq_fromBits (v : Word (F p2)) :
   refine Finset.sum_congr rfl fun j _ => ?_
   simp only [Nat.mul_zero, Nat.zero_add]
   rw [Add32.bitAt_eq _ j.val j.isLt, Vector.getElem_map]
-  rfl
 
 theorem bits_bool (v : Word (F p2)) :
     ∀ (i : ℕ) (hi : i < 32), (v.map ZMod.val)[i] = 0 ∨ (v.map ZMod.val)[i] = 1 := by
@@ -133,6 +132,7 @@ theorem eval_writeQuad (env : Environment (F p2))
     (q : Var Quad (F p2)) :
     Vector.map (Expression.eval env) (writeQuad v a b c d q) =
       writeQuad (Vector.map (Expression.eval env) v) a b c d (eval env q) := by
-  simp only [writeQuad, circuit_norm, eval_setWord]
+  obtain ⟨qa, qb, qc, qd⟩ := q
+  simp only [writeQuad, circuit_norm, explicit_provable_type, eval_setWord]
 
 end Solution.Blake3CompressGF2Canonical

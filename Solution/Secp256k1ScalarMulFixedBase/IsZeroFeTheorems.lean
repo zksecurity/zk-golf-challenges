@@ -14,7 +14,6 @@ namespace Solution.Secp256k1ScalarMulFixedBase
 section
 variable {p : ℕ} [Fact p.Prime] {m : ℕ}
 
-omit [Fact (Nat.Prime p)] in
 /-- A big integer denotes `0` iff every limb is `0`: the denotation is the
 positional sum `Σ x[i].val · 2^(B·i)` of non-negative terms. -/
 theorem BigInt.value_eq_zero_iff {B : ℕ} (x : BigInt m (F p)) :

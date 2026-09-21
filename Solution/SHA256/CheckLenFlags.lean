@@ -72,14 +72,13 @@ theorem soundness : FormalAssertion.Soundness (F p) main Assumptions Spec := by
     have := h_bool_raw i
     rw [h_flag i] at this
     rw [IsBool.iff_mul_sub_one]
-    rw [show flags[i.val] - 1 = flags[i.val] + -1 from by ring]
     exact this
   -- the field sum of flags equals 1
   have h_sum : (∑ i : Fin inputBufferLen, flags[i.val]) = 1 := by
     rw [eval_foldl_sum] at h_sum_raw
     have : (∑ i : Fin inputBufferLen, Expression.eval env input_var_lenFlags[i.val]) = 1 := by
       have := h_sum_raw
-      simp only [add_neg_eq_zero] at this
+      rw [sub_eq_zero] at this
       exact this
     rw [← this]
     apply Finset.sum_congr rfl
@@ -96,7 +95,7 @@ theorem soundness : FormalAssertion.Soundness (F p) main Assumptions Spec := by
       simp only [Expression.eval]
       rw [h_flag i]
     rw [heq] at h_wt_raw
-    rw [add_neg_eq_zero] at h_wt_raw
+    rw [sub_eq_zero] at h_wt_raw
     exact h_wt_raw
   exact onehot_from_constraints flags input_messageLen h_bool h_sum h_wt
 

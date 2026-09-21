@@ -129,7 +129,7 @@ theorem soundness :
   circuit_proof_start [main, Spec, Pin32Canon.circuit,
     Pin32Canon.Assumptions, Pin32Canon.Spec]
   obtain ⟨ha, hb, hc, hd⟩ := h_holds
-  rw [ha, hb, hc, hd]
+  exact ⟨ha, hb, hc, hd⟩
 
 theorem completeness :
     Completeness (F p2) main Assumptions := by
@@ -172,7 +172,8 @@ theorem soundness :
   rw [hav] at hdv
   rw [hdv] at hcv
   rw [hcv] at hbv
-  rw [hpin, hav, hbv, hcv, hdv]
+  obtain ⟨hp1, hp2, hp3, hp4⟩ := hpin
+  rw [hp1, hp2, hp3, hp4, hav, hbv, hcv, hdv]
   rfl
 
 theorem completeness :
@@ -218,7 +219,8 @@ theorem soundness :
   rw [hav] at hdv
   rw [hdv] at hcv
   rw [hcv] at hbv
-  rw [hpin, hav, hbv, hcv, hdv]
+  obtain ⟨hp1, hp2, hp3, hp4⟩ := hpin
+  rw [hp1, hp2, hp3, hp4, hav, hbv, hcv, hdv]
   rfl
 
 theorem completeness :

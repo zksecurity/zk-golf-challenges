@@ -89,6 +89,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
       Xor32.circuit input firstInput offset
       (by
         intro env env' h_input
+        simp only [firstInput]
         simp [circuit_norm] at h_input ⊢
         constructor
         · intro a ha

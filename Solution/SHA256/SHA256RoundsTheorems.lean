@@ -90,7 +90,7 @@ lemma foldlAcc_eq_stateVar_main (i₀ : ℕ)
           w := input_var_schedule[i] })
       input_var_state i =
         stateVar i₀ input_var_state i.val := by
-  simpa only using foldlAcc_eq_stateVar i₀ input_var_state input_var_schedule i.val i.isLt
+  exact foldlAcc_eq_stateVar i₀ input_var_state input_var_schedule i.val i.isLt
 
 omit [Fact (p > 2 ^ 33)] in
 lemma eval_mem_stateVar_of_agreesBelow {offset k : ℕ}
@@ -116,7 +116,7 @@ lemma eval_mem_stateVar_of_agreesBelow {offset k : ℕ}
       simp only [Vector.mem_iff_getElem] at ha
       rcases ha with ⟨i, hi, hget⟩
       rw [← hget]
-      simpa [Vector.getElem_map] using Vector.ext_iff.mp hword i hi
+      simpa [stateVar, Vector.getElem_map] using Vector.ext_iff.mp hword i hi
   | succ k ih =>
       intro j hj a ha
       have hprev : env.AgreesBelow (offset + k * 455) env' :=
@@ -213,8 +213,7 @@ lemma sha256Compress_eq_valStateAfterRound
             (Specs.SHA256.K[i.val]'(by have := i.isLt; omega)).toNat
             (input_schedule[i.val]'(by have := i.isLt; omega))) input_state =
         valStateAfterRound input_state input_schedule k by
-    have := h 64 (le_refl 64)
-    convert this using 1
+    exact h 64 (le_refl 64)
   intro k hk
   induction k with
   | zero => simp [valStateAfterRound, Fin.foldl_zero]

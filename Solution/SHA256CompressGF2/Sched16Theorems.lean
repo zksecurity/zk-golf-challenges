@@ -139,12 +139,21 @@ namespace Sched16
 
 /-- Explicit `ConstantLength` for the 16-step schedule fold body (125 witnesses per
     step). Naming it lets the fold in `main` skip synthesis and lets the cost/R1CS
-    lemmas fold with the same instance. -/
+    lemmas fold with the same instance.
+
+    The body is spelled in the `circuit_norm` normal form of the `do` block that
+    `main` writes (definitionally the same circuit). Since Lean 4.33 the unifier
+    checks this dependent argument at `implicit` transparency, so the loop-peeling
+    lemmas only fire when the `ConstantLength` index matches the body that
+    `circuit_norm` leaves behind. -/
 def constantLength :
-    Circuit.ConstantLength (fun (x : Vector (fields 32 (Expression (F p2))) 32 × Fin 16) => do
-      let ui ← ScheduleStep.circuit (c128 (x.1[x.2.val]'(by omega)) (x.1[x.2.val + 1]'(by omega))
-        (x.1[x.2.val + 9]'(by omega)) (x.1[x.2.val + 14]'(by omega)))
-      return x.1.set (16 + x.2.val) ui (by omega)) where
+    Circuit.ConstantLength (fun (x : Vector (fields 32 (Expression (F p2))) 32 × Fin 16) (n : ℕ) =>
+      (x.1.set (16 + x.2.val)
+          (ScheduleStep.circuit.output (c128 (x.1[x.2.val]'(by omega)) (x.1[x.2.val + 1]'(by omega))
+            (x.1[x.2.val + 9]'(by omega)) (x.1[x.2.val + 14]'(by omega))) n) (by omega),
+        [Operation.subcircuit (ScheduleStep.circuit.toSubcircuit n
+          (c128 (x.1[x.2.val]'(by omega)) (x.1[x.2.val + 1]'(by omega))
+            (x.1[x.2.val + 9]'(by omega)) (x.1[x.2.val + 14]'(by omega))))])) where
   localLength := 125
   localLength_eq _ _ := by
     simp [circuit_norm, ScheduleStep.circuit, ScheduleStep.elaborated]

@@ -1,6 +1,7 @@
 import Clean.Circuit
 import Clean.Utils.Tactics.ProvableStructDeriving
 import Challenge.Utils.CostR1CSCanonicalSpec
+import Challenge.Utils.WitgenIR
 import Challenge.Instances.KangarooTwelveGF2.Interface
 import Challenge.Instances.KangarooTwelveGF2.Cost
 
@@ -20,9 +21,14 @@ theorem completeness :
 theorem mainCost :
     Challenge.CostR1CS.circuitCost main ⟨allocations, constraints⟩ := sorry
 theorem isR1CS_Cidentity : Challenge.CostR1CS.isR1CS_Cidentity main := sorry
+theorem witgenIsIR : Challenge.WitgenIR.witgenIsIR main := sorry
 
 theorem computableWitness : ∀ n input,
   ProverEnvironment.OnlyAccessedBelow n (fun env : ProverEnvironment (F p2) => eval env input) →
   Circuit.ComputableWitnesses (main input) n := sorry
+
+theorem requirementsChannelsLawful : ∀ input offset,
+  ((main input).operations offset).RequirementsChannelsLawful
+    elaborated.channelsWithGuarantees [] := sorry
 
 end Solution.KangarooTwelveGF2

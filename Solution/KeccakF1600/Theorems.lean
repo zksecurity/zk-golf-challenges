@@ -254,7 +254,6 @@ lemma eval_notBits_vec (env : Environment (F p)) (v : Var (fields 64) (F p)) :
   ext i hi
   simp only [notBits, Vector.getElem_map]
   simp only [circuit_norm]
-  ring
 
 /-- Evaluating `xorConst c` of an expression lane applies `xorConst c` to the
 evaluated lane. -/
@@ -265,7 +264,6 @@ lemma eval_xorConst_vec (env : Environment (F p)) (v : Var (fields 64) (F p)) (c
   simp only [xorConst, Vector.getElem_map, Vector.getElem_ofFn]
   split
   · simp only [circuit_norm, Fin.getElem_fin, Vector.getElem_map]
-    ring
   · simp only [Fin.getElem_fin, Vector.getElem_map]
 
 lemma valueBits_eval_rotl (env : Environment (F p)) (v : Var (fields 64) (F p))

@@ -11,7 +11,7 @@ output word used by `Ch32Canon`/`Maj32Canon`.
 
 namespace Challenge.CostR1CS
 
-variable {F : Type} [Field F]
+variable {F : Type} [FiniteField F]
 
 /-- Canonical (`IsCidCirc`) analogue of `IsR1CSCirc.foldlRange_inv`: a `foldlRange`
 is ordered canonical-R1CS when every iteration is, for accumulators satisfying an

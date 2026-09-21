@@ -47,7 +47,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
       h_assumptions ⟨x.val + 20, by omega⟩⟩
   obtain ⟨h_val, h_norm⟩ := h_holds x harg
   refine ⟨h_norm, ?_⟩
-  rw [Vector.getElem_ofFn, h_val, hb _ (by omega), hb _ (by omega), hb _ (by omega),
+  rw [h_val, hb _ (by omega), hb _ (by omega), hb _ (by omega),
     hb _ (by omega), hb _ (by omega)]
 
 theorem completeness : Completeness (F p) main Assumptions := by

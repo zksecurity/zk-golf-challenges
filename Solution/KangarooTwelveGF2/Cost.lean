@@ -1,5 +1,6 @@
 import Solution.KangarooTwelveGF2.Round
 import Challenge.Utils.CostR1CSCanonical
+import Challenge.Utils.WitgenIR
 
 namespace Solution.KangarooTwelveGF2
 
@@ -96,11 +97,11 @@ theorem roundOut_affine (r : Fin Specs.KangarooTwelve.rounds)
       split <;> exact Affine.const _
   · exact bit_affine (chiFromProducts_affine hpre hproducts) _ _ _
 
-theorem wv_getElem {n : ℕ} (c : ProverEnvironment (F p2) → Vector (F p2) n)
+theorem wv_getElem {n : ℕ} (out : Witgen.VExpr (F p2) n)
     (w i : ℕ) (h : i < n) :
-    ((Circuit.witnessVector n c).output w)[i]'h = Expression.var ⟨w + i⟩ := by
-  rw [show (Circuit.witnessVector n c).output w = varFromOffset (fields n) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+    ((Circuit.witnessVector n out).output w)[i]'h = Expression.var ⟨w + i⟩ := by
+  rw [show (Circuit.witnessVector n out).output w = varFromOffset (fields n) w from rfl]
+  simp only [varFromOffset, size, explicit_provable_type, Vector.getElem_mapRange]
 
 section
 
@@ -151,12 +152,52 @@ theorem affineW_subOut (r : Fin Specs.KangarooTwelve.rounds) (s : StateVar)
   simp only [circuit_norm, subcircuit, Round.circuit, Round.elaborated]
   exact roundOut_affine r (preChi_affine hs) (affineW_mapRange_var _)
 
+/-! ## Witness-IR certificates
+
+Same skeleton as `costIs_main` / `isCidentity_ops` above, but every non-witness
+operation is discharged by its own combinator and the single witness site by the IR
+entry point it was built with (`Circuit.witnessVector` over the inlined literal vector
+of `chiProduct` expressions in `Round.main`). -/
+
+section WitgenIR
+
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the certificates: otherwise the
+-- unifier whnf's `operationsUseIR` on the round's 1600 flattened rows and times out.
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (r : Fin Specs.KangarooTwelve.rounds) (s : StateVar) :
+    UsesIRCirc (Round.main r s) := by
+  unfold Round.main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector permutationBits _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (r : Fin Specs.KangarooTwelve.rounds) (s : StateVar) :
+    UsesIRCirc (subcircuit (Round.circuit r) s) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main r s n)
+
+end WitgenIR
+
 theorem affineW_input_state {input : Var Input (F p2)} (hinput : AffineProvable input) :
     AffineW input.state := by
+  obtain ⟨s⟩ := input
   intro i hi
   have hsz : size Input = permutationBits := rfl
-  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz, hi] using
-    hinput i (by omega)
+  have h := hinput i (by omega)
+  simp only [circuit_norm, explicit_provable_type] at h
+  exact h
+
+/-- An `Output` whose `state` field is entrywise affine is affine as a provable
+value. -/
+theorem affineProvable_output {out : Var Output (F p2)} (h : AffineW out.state) :
+    AffineProvable out := by
+  obtain ⟨st⟩ := out
+  intro i hi
+  have hsz : size Output = permutationBits := rfl
+  simp only [circuit_norm, explicit_provable_type]
+  exact h i (by omega)
 
 end Cost
 

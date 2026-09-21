@@ -168,7 +168,7 @@ lemma soundness_core (i₀ : ℕ) (env : Environment (F circomPrime))
     (h_input_a : Vector.map (Expression.eval env) a_var = a)
     (h_input_b : Vector.map (Expression.eval env) b_var = b)
     (ha : Fe.Valid a) (hb : Fe.Valid b)
-    (hq_bool : env.get (i₀ + numLimbs) * (env.get (i₀ + numLimbs) + -1) = 0)
+    (hq_bool : env.get (i₀ + numLimbs) * (env.get (i₀ + numLimbs) - 1) = 0)
     (hr_norm : BigInt.Normalized limbBits (Vector.map (Expression.eval env)
         (Vector.mapRange numLimbs fun i => var { index := i₀ + i })))
     (h_lt_impl :
@@ -211,7 +211,7 @@ lemma soundness_core (i₀ : ℕ) (env : Environment (F circomPrime))
     rcases mul_eq_zero.mp hq_bool with h | h
     · rw [h, ZMod.val_zero]
       omega
-    · rw [add_neg_eq_zero] at h
+    · rw [sub_eq_zero] at h
       rw [h, ZMod.val_one]
   have hq_cast : env.get (i₀ + numLimbs)
       = (((env.get (i₀ + numLimbs)).val : ℕ) : F circomPrime) :=
@@ -249,7 +249,7 @@ lemma completeness_core (i₀ : ℕ) (env : Environment (F circomPrime))
     (h_wit_q : env.get (i₀ + numLimbs)
       = (((if BigInt.value limbBits a < BigInt.value limbBits b then 1 else 0 : ℕ))
           : F circomPrime)) :
-    env.get (i₀ + numLimbs) * (env.get (i₀ + numLimbs) + -1) = 0 ∧
+    env.get (i₀ + numLimbs) * (env.get (i₀ + numLimbs) - 1) = 0 ∧
       BigInt.Normalized limbBits (Vector.map (Expression.eval env)
           (Vector.mapRange numLimbs fun i => var { index := i₀ + i })) ∧
         ((BigInt.Normalized limbBits (Vector.map (Expression.eval env)

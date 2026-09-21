@@ -56,11 +56,9 @@ def circuit (P : BigIntParams p m) : FormalAssertion (F p) (Inputs m) where
   Spec := Spec P.B
   soundness := by
     circuit_proof_start
-    simp only [← h_input]
     rw [h_holds]
   completeness := by
     circuit_proof_start
-    simp only [← h_input] at h_assumptions h_spec
     exact BigInt.value_inj h_assumptions.1 h_assumptions.2 h_spec
 
 open Challenge.Utils.ComputableWitnessLemmas in

@@ -45,13 +45,11 @@ theorem val_lt_two_of_holds {n : ℕ}
     (env : Environment (F circomPrime))
     (bits : Vector (Expression (F circomPrime)) n)
     (h : ∀ i : Fin n,
-      Expression.eval env (bits[i.val]'i.isLt) * (Expression.eval env (bits[i.val]'i.isLt) + -1) = 0) :
+      Expression.eval env (bits[i.val]'i.isLt) * (Expression.eval env (bits[i.val]'i.isLt) - 1) = 0) :
     ∀ (i : ℕ) (hi : i < n), (Expression.eval env (bits[i]'hi)).val < 2 := by
   intro i hi
   have hz := h ⟨i, hi⟩
-  have hz' : Expression.eval env (bits[i]'hi) * (Expression.eval env (bits[i]'hi) - 1) = 0 := by
-    rw [sub_eq_add_neg]; exact hz
-  exact IsBool.val_lt_two (IsBool.iff_mul_sub_one.mpr hz')
+  exact IsBool.val_lt_two (IsBool.iff_mul_sub_one.mpr hz)
 
 /-- Turn the per-byte zero facts into the `DigestConsistent` predicate. -/
 theorem digestConsistent_of_facts

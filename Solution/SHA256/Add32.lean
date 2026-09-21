@@ -26,16 +26,42 @@ can distinguish the intended ℕ-level relation from field wraparound.
 
 namespace Add32
 
+/-! ## The witness IR
+
+`bitsValIR` is the witness-IR counterpart of `evalBitsNat` (an authoring-time fold of
+32 weighted bit values). Both witness sites are closed forms over it: the output bits
+share a single `mapRange` body, so the whole program is O(32) IR nodes. It is the one
+named piece of the witness program: the two sites that use it (the sum bits and the
+carry-out) are one-line closed forms written inline in `add32`. -/
+
+/-- IR expression for the ℕ value of a 32-bit operand: `Σ_i a[i].val · 2^i`
+(authoring-time fold; the witness-IR counterpart of `evalBitsNat`). -/
+def bitsValIR (a : Var (fields 32) (F p)) : Witgen.U64Expr (F p) :=
+  (List.finRange 32).foldr (fun i acc => a[i.val].val * (2 ^ i.val : ℕ) + acc) 0
+
+theorem eval_bitsValIR (a : Var (fields 32) (F p)) (ctx : Witgen.Ctx (F p)) :
+    (bitsValIR a).eval ctx = UInt64.ofNat (evalBitsNat ctx.env a) := by
+  rw [evalBitsNat, Fin.sum_univ_def, bitsValIR, List.sum_eq_foldr, List.foldr_map]
+  generalize List.finRange 32 = l
+  induction l with
+  | nil => rfl
+  | cons i l ih =>
+    simp only [circuit_norm] at ih
+    simp only [List.foldr_cons, circuit_norm, ih, UInt64.ofNat_add, UInt64.ofNat_mul]
+
 /-- Add two 32-bit words mod 2^32.
-    Both inputs are assumed to have boolean values in each bit position. -/
+    Both inputs are assumed to have boolean values in each bit position.
+
+    The two witness programs are closed forms over `bitsValIR`: bit `i` of the
+    truncated ℕ sum, and the carry-out bit. `eval_bitsValIR` is all the proofs need to
+    read the witnessed cells back in terms of `evalBitsNat`. -/
 def add32 (a b : Var (fields 32) (F p)) : Circuit (F p) (Var (fields 32) (F p)) := do
   -- Witness the lower 32 bits of the sum
-  let z ← witnessVector 32 fun env =>
-    let s := (evalBitsNat env a + evalBitsNat env b) % 2^32
-    Vector.ofFn fun (i : Fin 32) => ((s / 2^i.val % 2 : ℕ) : F p)
+  let z ← Circuit.witnessVector 32 (.range 32 fun i =>
+    ((bitsValIR a + bitsValIR b) % (2 ^ 32 : ℕ) / Witgen.U64Expr.pow2 i % 2).toField)
   -- Witness the carry-out bit
-  let cout ← witnessField fun env =>
-    ((( evalBitsNat env a + evalBitsNat env b) / 2^32 % 2 : ℕ) : F p)
+  let cout ← Circuit.witnessField
+    (((bitsValIR a + bitsValIR b) / (2 ^ 32 : ℕ) % 2).toField)
   -- Boolean constraints on output bits
   Circuit.forEach (Vector.finRange 32) fun i =>
     assertZero (z[i] * (z[i] - 1))
@@ -119,18 +145,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
       Expression.eval env (fromBitsExpr
         (Vector.mapRange 32 fun i => (var {index := i₀ + i} : Expression (F p)))) +
       (2^32 : F p) * env.get (i₀ + 32) := by
-    rw [← sub_eq_zero]
-    have h_ring : Expression.eval env (fromBitsExpr input_var_a) +
-        Expression.eval env (fromBitsExpr input_var_b) -
-        (Expression.eval env (fromBitsExpr
-          (Vector.mapRange 32 fun i => (var {index := i₀ + i} : Expression (F p)))) +
-        (2^32 : F p) * env.get (i₀ + 32)) =
-        Expression.eval env (fromBitsExpr input_var_a) +
-        Expression.eval env (fromBitsExpr input_var_b) +
-        -Expression.eval env (fromBitsExpr
-          (Vector.mapRange 32 fun i => (var {index := i₀ + i} : Expression (F p)))) +
-        -((2^32 : F p) * env.get (i₀ + 32)) := by ring
-    rw [h_ring]
+    rw [← sub_eq_zero, ← sub_sub]
     exact h_lin
   have h_sum_lt_p : valueBits input_a + valueBits input_b < p := by linarith
   have h_lhs_val : (Expression.eval env (fromBitsExpr input_var_a) +
@@ -169,14 +184,37 @@ theorem completeness : Completeness (F p) main Assumptions := by
   obtain ⟨ha, hb⟩ := h_assumptions
   obtain ⟨h_input_a, h_input_b⟩ := h_input
   obtain ⟨h_env_z, h_env_cout⟩ := h_env
+  -- the two operand values, and their `< 2^32` bounds
+  have h_evalBits_a : evalBitsNat env input_var_a = valueBits input_a :=
+    evalBitsNat_eq_valueBits env input_var_a input_a h_input_a
+  have h_evalBits_b : evalBitsNat env input_var_b = valueBits input_b :=
+    evalBitsNat_eq_valueBits env input_var_b input_b h_input_b
+  have hva_lt : valueBits input_a < 2^32 := valueBits_lt_two_pow input_a ha
+  have hvb_lt : valueBits input_b < 2^32 := valueBits_lt_two_pow input_b hb
+  -- the bounds must be in context *before* normalising the witness equations, so the
+  -- `u64Wrap` simproc can erase the `% 2^64` truncations the u64-sorted IR introduces
+  have ha_lt : evalBitsNat env input_var_a < 2^32 := by omega
+  have hb_lt : evalBitsNat env input_var_b < 2^32 := by omega
+  -- the witness programs are closed forms over `bitsValIR`, which `circuit_proof_start`
+  -- already pushed through: only the fold itself (and `pow2`) is left to read back
+  simp only [eval_bitsValIR, UInt64.toNat_ofNat',
+    Nat.one_shiftLeft, Witgen.u64Wrap] at h_env_z h_env_cout
   set S := evalBitsNat env input_var_a + evalBitsNat env input_var_b with hS_def
+  -- the per-bit divisor `2^i` is itself a u64 shift; `i < 32` so its wrap is the identity
+  replace h_env_z : ∀ i : Fin 32,
+      env.get (i₀ + i.val) = ((S % 2 ^ 32 / 2 ^ i.val % 2 : ℕ) : F p) := by
+    intro i
+    rw [h_env_z i, Nat.mod_eq_of_lt
+      (Nat.pow_lt_pow_right (by norm_num) (by omega : i.val < 64))]
   have h_p_large := h_large.elim
   have h33 : (2:ℕ)^33 = 2^32 + 2^32 := by norm_num
   have hp32 : (2:ℕ)^32 < p := by linarith
+  have hS_eq : S = valueBits input_a + valueBits input_b := by
+    rw [hS_def, h_evalBits_a, h_evalBits_b]
+  have hS_lt_33 : S < 2^33 := by rw [hS_eq]; linarith
   refine ⟨fun i => ?_, ?_, ?_⟩
   · -- Boolean constraint for z[i]: z[i] * (z[i] + -1) = 0
     have henv_i := h_env_z i
-    simp only [Vector.getElem_ofFn] at henv_i
     rw [henv_i]
     rcases Nat.mod_two_eq_zero_or_one (S % 2^32 / 2^i.val) with h | h <;>
       rw [h] <;> push_cast <;> ring
@@ -185,17 +223,6 @@ theorem completeness : Completeness (F p) main Assumptions := by
     rcases Nat.mod_two_eq_zero_or_one (S / 2^32) with h | h <;>
       rw [h] <;> push_cast <;> ring
   · -- Linear constraint: FA + FB - FZ - 2^32 * cout = 0 in F p
-    -- We prove evalBitsNat env a = valueBits input_a, similarly for b
-    have h_evalBits_a : evalBitsNat env input_var_a = valueBits input_a :=
-      evalBitsNat_eq_valueBits env input_var_a input_a h_input_a
-    have h_evalBits_b : evalBitsNat env input_var_b = valueBits input_b :=
-      evalBitsNat_eq_valueBits env input_var_b input_b h_input_b
-    have hS_eq : S = valueBits input_a + valueBits input_b := by
-      rw [hS_def, h_evalBits_a, h_evalBits_b]
-    -- valueBits bounds
-    have hva_lt : valueBits input_a < 2^32 := valueBits_lt_two_pow input_a ha
-    have hvb_lt : valueBits input_b < 2^32 := valueBits_lt_two_pow input_b hb
-    have hS_lt_33 : S < 2^33 := by rw [hS_eq]; linarith
     -- Bit decomposition of S % 2^32: S % 2^32 = ∑ i, (S%2^32 / 2^i % 2) * 2^i
     have h_S_mod_lt : S % 2^32 < 2^32 := Nat.mod_lt _ (by norm_num)
     -- S / 2^32 ∈ {0, 1} since S < 2^33
@@ -251,12 +278,8 @@ theorem completeness : Completeness (F p) main Assumptions := by
       rw [Nat.cast_add, Nat.cast_add, Nat.cast_mul] at h
       rw [show ((2^32 : ℕ) : F p) = (2^32 : F p) from by push_cast; ring] at h
       exact h
-    -- Goal: ↑va + ↑vb + -↑(S%2^32) + -((2^32 : F p) * ↑(S/2^32%2)) = 0
-    have rearrange : ((valueBits input_a : ℕ) : F p) + ((valueBits input_b : ℕ) : F p) +
-        -((S % 2^32 : ℕ) : F p) + -((2^32 : F p) * ((S / 2^32 % 2 : ℕ) : F p)) =
-        (((valueBits input_a : ℕ) : F p) + ((valueBits input_b : ℕ) : F p)) -
-        (((S % 2^32 : ℕ) : F p) + (2^32 : F p) * ((S / 2^32 % 2 : ℕ) : F p)) := by ring
-    rw [rearrange, hF, sub_self]
+    -- Goal: ↑va + ↑vb - ↑(S%2^32) - (2^32 : F p) * ↑(S/2^32%2) = 0
+    rw [sub_sub, hF, sub_self]
 
 def circuit [Fact (p > 2^33)] : FormalCircuit (F p) Inputs (fields 32) where
   main; elaborated; Assumptions; Spec; soundness; completeness
@@ -269,12 +292,14 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
   apply
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
   unfold main add32
-  let zCircuit : Circuit (F p) (Var (fields 32) (F p)) := witnessVector 32 fun env =>
-      let s := (evalBitsNat env input.a + evalBitsNat env input.b) % 2^32
-      Vector.ofFn fun (i : Fin 32) => ((s / 2^i.val % 2 : ℕ) : F p)
+  let zCircuit : Circuit (F p) (Var (fields 32) (F p)) :=
+    Circuit.witnessVector 32 (.range 32 fun i =>
+      ((bitsValIR input.a + bitsValIR input.b) % (2 ^ 32 : ℕ)
+        / Witgen.U64Expr.pow2 i % 2).toField)
   let z := zCircuit.output offset
-  let coutCircuit : Circuit (F p) (Expression (F p)) := witnessField fun env =>
-    ((( evalBitsNat env input.a + evalBitsNat env input.b) / 2^32 % 2 : ℕ) : F p)
+  let coutCircuit : Circuit (F p) (Expression (F p)) :=
+    Circuit.witnessField
+      (((bitsValIR input.a + bitsValIR input.b) / (2 ^ 32 : ℕ) % 2).toField)
   simp only [
     Challenge.Utils.ComputableWitnessLemmas.Circuit.bind_structuralComputableWitnesses_iff,
     Challenge.Utils.ComputableWitnessLemmas.Circuit.witnessVector_structuralComputableWitnesses_iff,
@@ -285,37 +310,41 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
+    obtain ⟨ia, ib⟩ := input
     simp [circuit_norm] at h_input
-    have ha : evalBitsNat env input.a = evalBitsNat env' input.a := by
+    have ha : evalBitsNat env ia = evalBitsNat env' ia := by
       unfold evalBitsNat
       apply Finset.sum_congr rfl
       intro i _
       exact congrArg (fun x : F p => x.val * 2^i.val)
         (h_input.1 _ (Vector.getElem_mem i.isLt))
-    have hb : evalBitsNat env input.b = evalBitsNat env' input.b := by
+    have hb : evalBitsNat env ib = evalBitsNat env' ib := by
       unfold evalBitsNat
       apply Finset.sum_congr rfl
       intro i _
       exact congrArg (fun x : F p => x.val * 2^i.val)
         (h_input.2 _ (Vector.getElem_mem i.isLt))
-    simp [ha, hb]
+    -- each witnessed cell reads the operands only through `bitsValIR`
+    refine Vector.ext fun i hi => ?_
+    simp only [circuit_norm, eval_bitsValIR, ha, hb]
   · intro _ h_input
+    obtain ⟨ia, ib⟩ := input
     simp [circuit_norm] at h_input
-    have ha : evalBitsNat env input.a = evalBitsNat env' input.a := by
+    have ha : evalBitsNat env ia = evalBitsNat env' ia := by
       unfold evalBitsNat
       apply Finset.sum_congr rfl
       intro i _
       exact congrArg (fun x : F p => x.val * 2^i.val)
         (h_input.1 _ (Vector.getElem_mem i.isLt))
-    have hb : evalBitsNat env input.b = evalBitsNat env' input.b := by
+    have hb : evalBitsNat env ib = evalBitsNat env' ib := by
       unfold evalBitsNat
       apply Finset.sum_congr rfl
       intro i _
       exact congrArg (fun x : F p => x.val * 2^i.val)
         (h_input.2 _ (Vector.getElem_mem i.isLt))
-    simp [ha, hb]
-  · intro _
-    trivial
+    -- the carry-out cell reads the operands only through `bitsValIR`
+    simp only [circuit_norm, eval_bitsValIR, ha, hb]
+  all_goals trivial
 
 end Add32
 end Solution.SHA256

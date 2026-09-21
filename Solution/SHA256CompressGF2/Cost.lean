@@ -8,12 +8,17 @@ import Solution.SHA256CompressGF2.Pin256
 import Solution.SHA256CompressGF2.Sched16
 import Solution.SHA256CompressGF2.Rounds16
 import Solution.SHA256CompressGF2.MainTheorems
+import Challenge.Utils.WitgenIR
 
 /-!
 # Cost and R1CS certificates
 
-Structural operation-count (`CostIs`) and single-row-R1CS (`IsR1CSCirc` /
-`AffineW`) certificates for every gadget, kept out of the functional files.
+Structural operation-count (`CostIs`), single-row-R1CS (`IsR1CSCirc` / `AffineW`)
+and witness-IR (`UsesIRCirc`) certificates for every gadget, kept out of the
+functional files. The `usesIR_*` certificates cover the gadgets that own a witness
+site; the composites above them only compose subcircuits, and the instance-level
+`witgenIsIR` obligation is discharged in
+`Solution/SHA256CompressGF2Canonical/Main.lean` over the canonical chain.
 -/
 
 namespace Solution.SHA256CompressGF2
@@ -85,6 +90,24 @@ theorem isR1CS_sub (b : Var Inputs (F p2)) (hx : AffineW b.x) (hy : AffineW b.y)
     IsR1CSCirc (subcircuit circuit b) :=
   IsR1CSCirc.subcircuit (fun n => isR1CS_main b hx hy n)
 
+section WitgenIR
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the certificates: otherwise the
+-- unifier whnf's `operationsUseIR` on the flattened operation list and times out.
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var Inputs (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 31 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var Inputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Add32
 
 open Add32 (isR1CSCirc_forEach_mem)
@@ -140,6 +163,22 @@ theorem isR1CS_sub (b : Var (fields 96) (F p2)) (hb : AffineW b) :
     IsR1CSCirc (subcircuit circuit b) :=
   IsR1CSCirc.subcircuit (fun n => isR1CS_main b hb n)
 
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 96) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 96) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Ch32
 
 namespace Maj32
@@ -177,6 +216,22 @@ theorem isR1CS_sub (b : Var (fields 96) (F p2)) (hb : AffineW b) :
     IsR1CSCirc (subcircuit circuit b) :=
   IsR1CSCirc.subcircuit (fun n => isR1CS_main b hb n)
 
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 96) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 96) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Maj32
 
 namespace Pin32
@@ -211,6 +266,22 @@ theorem isR1CS_main (b : Var (fields 32) (F p2)) (hb : AffineW b) :
 theorem isR1CS_sub (b : Var (fields 32) (F p2)) (hb : AffineW b) :
     IsR1CSCirc (subcircuit circuit b) :=
   IsR1CSCirc.subcircuit (fun n => isR1CS_main b hb n)
+
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 32) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 32) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
 
 end Pin32
 
@@ -338,8 +409,7 @@ theorem costIs_main (b : Var (fields 128) (F p2)) : CostIs (main b) ⟨125, 125�
   fun n => (CostIs.bind (Add32.costIs_sub _) fun _ =>
     CostIs.bind (Add32.costIs_sub _) fun _ =>
     CostIs.bind (Add32.costIs_sub _) fun _ =>
-    CostIs.bind (Pin32.costIs_sub _) fun _ =>
-    CostIs.pure _ : CostIs (main b) (⟨31, 31⟩ + (⟨31, 31⟩ + (⟨31, 31⟩ + (⟨32, 32⟩ + ⟨0, 0⟩))))) n
+    Pin32.costIs_sub _ : CostIs (main b) (⟨31, 31⟩ + (⟨31, 31⟩ + (⟨31, 31⟩ + ⟨32, 32⟩)))) n
 
 theorem costIs_sub (b : Var (fields 128) (F p2)) : CostIs (subcircuit circuit b) ⟨125, 125⟩ :=
   CostIs.subcircuit (fun n => costIs_main b n)
@@ -355,10 +425,8 @@ theorem isR1CS_main (b : Var (fields 128) (F p2)) (hb : AffineW b) :
   refine IsR1CSCirc.bind_out (add32_r1cs _ _ h0 hw0) fun n2 => ?_
   refine IsR1CSCirc.bind_out
     (add32_r1cs _ _ (affineW_out_add32 _ _ h1 hw2 n1) (affineW_out_add32 _ _ h0 hw0 n2)) fun n3 => ?_
-  refine IsR1CSCirc.bind
-    (Pin32.isR1CS_sub _
-      (affineW_out_add32 _ _ (affineW_out_add32 _ _ h1 hw2 n1) (affineW_out_add32 _ _ h0 hw0 n2) n3)) fun _ => ?_
-  exact IsR1CSCirc.pure _
+  exact Pin32.isR1CS_sub _
+    (affineW_out_add32 _ _ (affineW_out_add32 _ _ h1 hw2 n1) (affineW_out_add32 _ _ h0 hw0 n2) n3)
 
 theorem isR1CS_sub (b : Var (fields 128) (F p2)) (hb : AffineW b) :
     IsR1CSCirc (subcircuit circuit b) :=
@@ -504,6 +572,22 @@ theorem affineW_subOut (b : Var (fields 256) (F p2)) (n : ℕ) :
     AffineW ((subcircuit circuit b).output n) := by
   simp only [circuit_norm, subcircuit, circuit, elaborated]
   exact affineW_mapRange_var _
+
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 256) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 256 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 256) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
 
 end Pin256
 
@@ -755,17 +839,29 @@ theorem out256_add32_affine {input : Var Input (F p2)} (hh : AffineW input.h)
 /-- Project the generic `AffineProvable` hypothesis onto the input `h` field. -/
 theorem affineW_input_h {input : Var Input (F p2)} (hinput : AffineProvable input) :
     AffineW input.h := by
+  obtain ⟨hv, mv⟩ := input
   intro i hi
-  have hi256 : i < 256 := hi
   have hsz : size Input = 768 := rfl
-  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz, hi] using hinput i (by omega)
+  have hcv : cvBits = 256 := rfl
+  have hx := hinput i (by omega)
+  simp only [circuit_norm, explicit_provable_type] at hx
+  show Affine hv[i]
+  rw [Vector.getElem_append_left' hi (mv ++ (#v[] : Vector (Expression (F p2)) 0))]
+  exact hx
 
 /-- Project the generic `AffineProvable` hypothesis onto the input `m` field. -/
 theorem affineW_input_m {input : Var Input (F p2)} (hinput : AffineProvable input) :
     AffineW input.m := by
+  obtain ⟨hv, mv⟩ := input
   intro i hi
-  have hi512 : i < 512 := hi
   have hsz : size Input = 768 := rfl
-  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz, hi] using hinput (256 + i) (by omega)
+  have hcv : cvBits = 256 := rfl
+  have hbb : blockBits = 512 := rfl
+  have hx := hinput (i + cvBits) (by omega)
+  simp only [circuit_norm, explicit_provable_type] at hx
+  show Affine mv[i]
+  rw [Vector.getElem_append_left' hi (#v[] : Vector (Expression (F p2)) 0),
+    Vector.getElem_append_right' hv (by omega)]
+  exact hx
 
 end Solution.SHA256CompressGF2

@@ -23,6 +23,10 @@ This file builds the `FormalCircuit`:
 ## FormalCircuit for full block compression (messageSchedule + 64 rounds + Davies-Meyer)
 -/
 
+-- Lean 4.33 exposes `Fin.foldl` during reduction. Keep the concrete 48-step fold in
+-- the value-level schedule specification opaque to the generic circuit simp pass.
+attribute [local irreducible] Specs.SHA256.messageSchedule
+
 namespace CompressBlock
 
 structure Inputs (F : Type) where
@@ -194,6 +198,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         MessageSchedule.circuit input input.block offset
         (by
           intro env env' h_input
+          obtain ⟨_st, _bl⟩ := input
           simp [circuit_norm] at h_input ⊢
           exact h_input.2)
         h_messageSchedule env env'
@@ -202,16 +207,22 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         SHA256Rounds.circuit input ⟨input.state, schedule⟩ roundsOffset
         (by
           intro k env env' hle h_agree h_input
-          have h_parent_input := h_input
-          simp [circuit_norm] at h_input ⊢
+          have hparts :
+              eval env.toEnvironment input.state = eval env'.toEnvironment input.state ∧
+                eval env.toEnvironment input.block = eval env'.toEnvironment input.block := by
+            obtain ⟨_st, _bl⟩ := input
+            simp [circuit_norm] at h_input
+            exact ⟨h_input.1, h_input.2⟩
+          simp [circuit_norm]
           constructor
-          · exact h_input.1
+          · exact hparts.1
           · have h_sched_agree : env.AgreesBelow (offset + 48 * 227) env' :=
               ProverEnvironment.agreesBelow_of_le h_agree (by
                 simpa [roundsOffset, h_schedule_len] using hle)
             have h_block_eval : eval env input.block = eval env' input.block := by
-              simpa [circuit_norm] using
-                congrArg (fun x : Inputs (F p) => x.block) h_parent_input
+              rw [CircuitType.eval_expression_prover_to_verifier env input.block,
+                CircuitType.eval_expression_prover_to_verifier env' input.block]
+              exact hparts.2
             have h_schedule_output :
                 schedule = MessageSchedule.varSchedule offset input.block 48 := by
               simp [schedule, scheduleCircuit, MessageSchedule.circuit, circuit_norm]
@@ -239,7 +250,12 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
         (addOffset + i.val * (addBody 0).localLength)
         (by
           intro k env env' hle h_agree h_input
-          simp [circuit_norm] at h_input ⊢
+          have hstate : eval env.toEnvironment input.state =
+              eval env'.toEnvironment input.state := by
+            obtain ⟨_st, _bl⟩ := input
+            simp [circuit_norm] at h_input
+            exact h_input.1
+          simp [circuit_norm]
           constructor
           · intro a ha
             have hword :
@@ -248,7 +264,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
               rw [← CircuitType.eval_var_fields env.toEnvironment (input.state[i]),
                 ← CircuitType.eval_var_fields env'.toEnvironment (input.state[i])]
               simpa [getElem_eval_vector] using
-                congrArg (fun state : SHA256State (F p) => state[i.val]'i.isLt) h_input.1
+                congrArg (fun state : SHA256State (F p) => state[i.val]'i.isLt) hstate
             simp only [Vector.mem_iff_getElem] at ha
             rcases ha with ⟨b, hb, hget⟩
             rw [← hget]
@@ -262,7 +278,7 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
               simp [state', roundsCircuit, SHA256Rounds.circuit, circuit_norm]
             rw [h_state_output]
             exact SHA256Rounds.eval_mem_stateVar_of_agreesBelow
-              (offset := roundsOffset) (k := 64) (by omega) h_rounds_agree h_input.1 i.val i.isLt)
+              (offset := roundsOffset) (k := 64) (by omega) h_rounds_agree hstate i.val i.isLt)
         h_add32 env env'
   exact
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses

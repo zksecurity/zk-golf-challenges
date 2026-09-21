@@ -27,6 +27,16 @@ open Solution.RSASSAPKCS1v15_SHA256_4096_65537
 open Bytes
 open Specs.RSASSAPKCS1v15
 
+/-- `ByteBlock.circuit` allocates no witnesses. Stated as a separate lemma
+because the projection no longer reduces on the unfolded `FormalAssertion`
+constructor. -/
+lemma byteBlock_localLength (x : Var ByteBlock.Inputs (F circomPrime)) :
+    ByteBlock.circuit.localLength x = 0 := rfl
+
+/-- `ByteBlock.circuit` guarantees no channels. -/
+lemma byteBlock_channelsWithGuarantees :
+    ByteBlock.circuit.channelsWithGuarantees = [] := rfl
+
 /-- Bit-witness generator reading from the byte vector: bit `i` is bit `i % 8` of
 big-endian byte `511 - i / 8`. -/
 def bitsWitness (bytes : Var (fields modulusBytesLen) (F circomPrime))
@@ -39,6 +49,33 @@ def bitsWitness (bytes : Var (fields modulusBytesLen) (F circomPrime))
         (Expression.eval env.toEnvironment (bytes[j]'h)).val
       else 0
     ((byteVal / 2 ^ t % 2 : ℕ) : F circomPrime)
+
+/-- Witness-IR program for the `totalBits` bits: one `.range` body over the flat bit
+index. The bytes are big-endian, so bit `i` sits in byte `511 − i / 8`; reading that
+index out of the *reversed* byte vector turns the truncated subtraction into a plain
+`i / 8`, which the u64 index sort computes exactly (`i / 8 ≤ 511`). The body is a pure
+expression, so the site stays an ordinary `witnessVector`. -/
+def bitsIR (bytes : Var (fields modulusBytesLen) (F circomPrime)) :
+    Witgen.VExpr (F circomPrime) totalBits :=
+  .range totalBits fun i => ((bytes.reverse[i / 8].val >>> (i % 8)) % 2).toField
+
+/-- `bitsIR` computes exactly `bitsWitness`, the value the proofs are stated over.
+Unconditional: the byte index is exact, and `U64Expr.val`'s truncation to `2^64`
+cannot reach bit `i % 8 < 8`. -/
+theorem eval_bitsIR (bytes : Var (fields modulusBytesLen) (F circomPrime))
+    (env : ProverEnvironment (F circomPrime)) :
+    (bitsIR bytes).eval { env } = bitsWitness bytes env := by
+  ext i hi
+  simp only [totalBits] at hi
+  have hlt : i / 8 < modulusBytesLen := by show i / 8 < 512; omega
+  have hlt2 : 511 - i / 8 < modulusBytesLen := by show 511 - i / 8 < 512; omega
+  rw [bitsIR, Witgen.VExpr.range_def, Witgen.VExpr.getElem_eval_mapRange _ _ _ i (by simpa only [totalBits] using hi),
+    bitsWitness, Vector.getElem_ofFn]
+  simp only [circuit_norm, Vector.getElem_reverse hlt, dif_pos hlt, dif_pos hlt2,
+    Nat.shiftRight_eq_div_pow, show modulusBytesLen - 1 - i / 8 = 511 - i / 8 from rfl]
+  congr 1
+  rw [← Nat.toNat_testBit, ← Nat.toNat_testBit, Nat.testBit_mod_two_pow]
+  simp [show i % 8 < 64 by omega]
 
 /-- The 32-byte slice of block `b` (`b = 0` most significant): global bytes
 `[32·b, 32·b+32)`. -/
@@ -59,7 +96,7 @@ def bitSlice (allBits : Vector (Expression (F circomPrime)) totalBits) (b : Fin 
 `ByteBlock` assertion, and pack the witnessed bits into a `BigInt 34`. -/
 def main (bytes : Var (fields modulusBytesLen) (F circomPrime)) :
     Circuit (F circomPrime) (Var (BigInt numLimbs) (F circomPrime)) := do
-  let allBits ← witnessVector totalBits (bitsWitness bytes)
+  let allBits ← Circuit.witnessVector totalBits (bitsIR bytes)
   Circuit.forEach (Vector.finRange 16)
     (fun b => ByteBlock.circuit { bytes := byteSlice bytes b, bits := bitSlice allBits b })
     (_constant := ⟨0, by
@@ -72,7 +109,7 @@ instance elaborated :
   localLength _ := totalBits
   localLength_eq := by
     intro input offset
-    simp only [main, circuit_norm, ByteBlock.circuit, ByteBlock.elaborated]
+    simp only [main, circuit_norm, byteBlock_localLength]
   output _ offset := Bytes.packLimbs (varFromOffset (fields totalBits) offset)
   output_eq := by
     intro input offset
@@ -82,7 +119,7 @@ instance elaborated :
     simp +arith [main, circuit_norm, ByteBlock.circuit, ByteBlock.elaborated]
   channelsLawful := by
     intro input offset
-    simp +arith [main, circuit_norm, ByteBlock.circuit, ByteBlock.elaborated]
+    simp +arith [main, circuit_norm, byteBlock_channelsWithGuarantees]
 
 /-- Precondition: the input is a genuine octet string (each byte `< 256`). -/
 def Assumptions (bytes : (fields modulusBytesLen) (F circomPrime)) : Prop :=
@@ -192,6 +229,8 @@ theorem soundness : Soundness (F circomPrime) main Assumptions Spec := by
 set_option linter.constructorNameAsVariable false in
 theorem completeness : Completeness (F circomPrime) main Assumptions := by
   circuit_proof_start [main, Assumptions]
+  -- read the witnessed cells as `bitsWitness`, the value `bitsIR` computes
+  simp only [eval_bitsIR] at h_env
   set allBits := (Vector.mapRange totalBits fun i ↦ var (F := F circomPrime) { index := i₀ + i })
     with hAllBits
   have hmb : (modulusBytesLen : ℕ) = 512 := rfl
@@ -306,7 +345,7 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
       intro j hj
       have := congrArg (fun v : Vector (F circomPrime) modulusBytesLen => v[j]'hj) h_input
       simpa only [circuit_norm, Vector.getElem_map] using this
-    simp only [bitsWitness]
+    simp only [eval_bitsIR, bitsWitness]
     apply Vector.ext
     intro i hi
     simp only [Vector.getElem_ofFn]
@@ -315,9 +354,9 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     · rw [dif_neg hj, dif_neg hj]
   case blocks =>
     intro i
-    have hlen : (witnessVector totalBits (bitsWitness input)).localLength offset = totalBits := by
+    have hlen : (Circuit.witnessVector totalBits (bitsIR input)).localLength offset = totalBits := by
       simp only [circuit_norm]
-    set allBits := (witnessVector totalBits (bitsWitness input)).output offset with hAllBits
+    set allBits := (Circuit.witnessVector totalBits (bitsIR input)).output offset with hAllBits
     set bs := byteSlice input (Vector.finRange 16)[i.val] with hbs
     set bt := bitSlice allBits (Vector.finRange 16)[i.val] with hbt
     have halen : (assertion ByteBlock.circuit

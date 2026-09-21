@@ -4,11 +4,13 @@ import Solution.KeccakF1600.ChiLane
 import Solution.KeccakF1600.KeccakRound
 import Solution.KeccakF1600.MainTheorems
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 
 namespace Solution.KeccakF1600
 
 open Challenge.Instances.KeccakF1600.Interface
 open Challenge.CostR1CS
+open Challenge.WitgenIR
 
 namespace Cost
 
@@ -343,6 +345,113 @@ theorem r1cs_round (c : ℕ) (state : Var KeccakBitState (F circomPrime)) (hs : 
 theorem r1cs_sub_round (c : ℕ) (hc : c < 2^64) (state : Var KeccakBitState (F circomPrime))
     (hs : StateAffine state) : IsR1CSCirc (subcircuit (KeccakRound.circuit c hc) state) :=
   IsR1CSCirc.subcircuit (r1cs_round c state hs)
+
+/-! ## Witness-IR certificates
+
+Same skeleton as the `IsR1CSCirc` proofs above, but every non-witness operation is
+discharged by `trivial` and every witness site by the IR entry point it was built with
+(`Circuit.witnessVector` over the inlined per-bit xor / product programs in
+`XorLane.xorLane` and `AndLane.andLane`). -/
+
+-- Keep the IR predicates opaque while *applying* the per-gadget certificates: as with
+-- the R1CS predicates above, the unifier otherwise whnf's `operationsUseIR` on a
+-- gadget's 64 flattened rows and times out.
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_xorLane (a b : Var (fields 64) (F circomPrime)) :
+    UsesIRCirc (XorLane.xorLane a b) := by
+  unfold XorLane.xorLane
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 64 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_andLane (a b : Var (fields 64) (F circomPrime)) :
+    UsesIRCirc (AndLane.andLane a b) := by
+  unfold AndLane.andLane
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 64 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub_xorLane (b : Var XorLane.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit XorLane.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_xorLane b.a b.b n)
+
+theorem usesIR_sub_andLane (b : Var AndLane.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit AndLane.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_andLane b.a b.b n)
+
+theorem usesIR_xor5Lane (input : Var Xor5Lane.Inputs (F circomPrime)) :
+    UsesIRCirc (Xor5Lane.main input) :=
+  UsesIRCirc.bind (usesIR_sub_xorLane _) fun _ =>
+  UsesIRCirc.bind (usesIR_sub_xorLane _) fun _ =>
+  UsesIRCirc.bind (usesIR_sub_xorLane _) fun _ =>
+  usesIR_sub_xorLane _
+
+theorem usesIR_sub_xor5Lane (b : Var Xor5Lane.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit Xor5Lane.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_xor5Lane b n)
+
+theorem usesIR_chiLane (input : Var ChiLane.Inputs (F circomPrime)) :
+    UsesIRCirc (ChiLane.main input) :=
+  UsesIRCirc.bind (usesIR_sub_andLane _) fun _ => usesIR_sub_xorLane _
+
+theorem usesIR_sub_chiLane (b : Var ChiLane.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit ChiLane.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_chiLane b n)
+
+theorem usesIR_thetaC (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (ThetaC.main state) :=
+  UsesIRCirc.mapFinRange fun _ n => usesIR_sub_xor5Lane _ n
+
+theorem usesIR_thetaD (c : Var KeccakBitRow (F circomPrime)) :
+    UsesIRCirc (ThetaD.main c) :=
+  UsesIRCirc.mapFinRange fun _ n => usesIR_sub_xorLane _ n
+
+theorem usesIR_thetaXor (b : Var ThetaXor.Inputs (F circomPrime)) :
+    UsesIRCirc (ThetaXor.main b) := by
+  obtain ⟨state, d⟩ := b
+  unfold ThetaXor.main
+  exact UsesIRCirc.mapFinRange fun _ n => usesIR_sub_xorLane _ n
+
+theorem usesIR_sub_thetaC (b : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (subcircuit ThetaC.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_thetaC b n)
+
+theorem usesIR_sub_thetaD (b : Var KeccakBitRow (F circomPrime)) :
+    UsesIRCirc (subcircuit ThetaD.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_thetaD b n)
+
+theorem usesIR_sub_thetaXor (b : Var ThetaXor.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit ThetaXor.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_thetaXor b n)
+
+theorem usesIR_theta (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (Theta.main state) :=
+  UsesIRCirc.bind (usesIR_sub_thetaC _) fun _ =>
+  UsesIRCirc.bind (usesIR_sub_thetaD _) fun _ =>
+  usesIR_sub_thetaXor _
+
+theorem usesIR_sub_theta (b : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (subcircuit Theta.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_theta b n)
+
+theorem usesIR_chi (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (Chi.main state) :=
+  UsesIRCirc.mapFinRange fun _ n => usesIR_sub_chiLane _ n
+
+theorem usesIR_sub_chi (b : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (subcircuit Chi.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_chi b n)
+
+theorem usesIR_round (c : ℕ) (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (KeccakRound.main c state) :=
+  UsesIRCirc.bind (usesIR_sub_theta _) fun _ =>
+  UsesIRCirc.bind (usesIR_sub_chi _) fun _ =>
+  UsesIRCirc.pure _
+
+theorem usesIR_sub_round (c : ℕ) (hc : c < 2^64) (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (subcircuit (KeccakRound.circuit c hc) state) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_round c state n)
 
 end Cost
 end Solution.KeccakF1600

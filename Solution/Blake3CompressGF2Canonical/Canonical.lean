@@ -121,53 +121,81 @@ theorem affineW_initialBlockBits {bits : Vector (Expression (F p2)) 896}
 
 theorem affineW_input_bits {input : Var Input (F p2)}
     (hinput : AffineProvable input) : AffineW input.bits := by
+  obtain ⟨bits⟩ := input
   intro i hi
   simp only [inputBits] at hi
   have hsz : size Input = 896 := rfl
-  simpa [AffineProvable, circuit_norm, explicit_provable_type, hsz, hi] using
-    hinput i (by omega)
+  have hx := hinput i (by omega)
+  simp only [circuit_norm, explicit_provable_type] at hx
+  show Affine bits[i]
+  rw [Vector.getElem_append_left' hi (#v[] : Vector (Expression (F p2)) 0)]
+  exact hx
 
 theorem affineW_quad_a {q : Var Quad (F p2)} (hq : AffineProvable q) :
     AffineW q.a := by
-  have hflat : AffineW (q.a ++ (q.b ++ (q.c ++ q.d))) := by
+  obtain ⟨qa, qb, qc, qd⟩ := q
+  have hflat : AffineW (qa ++ (qb ++ (qc ++ (qd ++ (#v[] : Vector (Expression (F p2)) 0))))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hq i hi
+    have hsz : size Quad = 128 := rfl
+    have hx := hq i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hx
+    exact hx
   exact hflat.left_of_append
 
 theorem affineW_quad_b {q : Var Quad (F p2)} (hq : AffineProvable q) :
     AffineW q.b := by
-  have hflat : AffineW (q.a ++ (q.b ++ (q.c ++ q.d))) := by
+  obtain ⟨qa, qb, qc, qd⟩ := q
+  have hflat : AffineW (qa ++ (qb ++ (qc ++ (qd ++ (#v[] : Vector (Expression (F p2)) 0))))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hq i hi
+    have hsz : size Quad = 128 := rfl
+    have hx := hq i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hx
+    exact hx
   exact hflat.right_of_append.left_of_append
 
 theorem affineW_quad_c {q : Var Quad (F p2)} (hq : AffineProvable q) :
     AffineW q.c := by
-  have hflat : AffineW (q.a ++ (q.b ++ (q.c ++ q.d))) := by
+  obtain ⟨qa, qb, qc, qd⟩ := q
+  have hflat : AffineW (qa ++ (qb ++ (qc ++ (qd ++ (#v[] : Vector (Expression (F p2)) 0))))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hq i hi
+    have hsz : size Quad = 128 := rfl
+    have hx := hq i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hx
+    exact hx
   exact hflat.right_of_append.right_of_append.left_of_append
 
 theorem affineW_quad_d {q : Var Quad (F p2)} (hq : AffineProvable q) :
     AffineW q.d := by
-  have hflat : AffineW (q.a ++ (q.b ++ (q.c ++ q.d))) := by
+  obtain ⟨qa, qb, qc, qd⟩ := q
+  have hflat : AffineW (qa ++ (qb ++ (qc ++ (qd ++ (#v[] : Vector (Expression (F p2)) 0))))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hq i hi
-  exact hflat.right_of_append.right_of_append.right_of_append
+    have hsz : size Quad = 128 := rfl
+    have hx := hq i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hx
+    exact hx
+  exact hflat.right_of_append.right_of_append.right_of_append.left_of_append
 
 theorem affineW_config_state {x : Var Config (F p2)} (hx : AffineProvable x) :
     AffineW x.state := by
-  have hflat : AffineW (x.state ++ x.block) := by
+  obtain ⟨xstate, xblock⟩ := x
+  have hflat : AffineW (xstate ++ (xblock ++ (#v[] : Vector (Expression (F p2)) 0))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hx i hi
+    have hsz : size Config = 1024 := rfl
+    have hxi := hx i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hxi
+    exact hxi
   exact hflat.left_of_append
 
 theorem affineW_config_block {x : Var Config (F p2)} (hx : AffineProvable x) :
     AffineW x.block := by
-  have hflat : AffineW (x.state ++ x.block) := by
+  obtain ⟨xstate, xblock⟩ := x
+  have hflat : AffineW (xstate ++ (xblock ++ (#v[] : Vector (Expression (F p2)) 0))) := by
     intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hx i hi
-  exact hflat.right_of_append
+    have hsz : size Config = 1024 := rfl
+    have hxi := hx i (by omega)
+    simp only [circuit_norm, explicit_provable_type] at hxi
+    exact hxi
+  exact hflat.right_of_append.left_of_append
 
 namespace Add32Canon
 
@@ -702,11 +730,13 @@ theorem isCidentity_sub (input : Var Config (F p2))
     IsCidCirc (subcircuit circuit input) :=
   IsCidCirc.subcircuit (isCidentity_main input hs hm).ops
 
+set_option maxRecDepth 2000 in
 theorem output_state_eq (input : Var Config (F p2)) (n : ℕ) :
     ((subcircuit circuit input).output n).state =
       (varFromOffset (fields 512) (n + 24384 + 23360) :
         Var (fields 512) (F p2)) := rfl
 
+set_option maxRecDepth 2000 in
 theorem output_block_eq (input : Var Config (F p2)) (n : ℕ) :
     ((subcircuit circuit input).output n).block =
       (varFromOffset (fields 512) (n + 24384 + 23872) :

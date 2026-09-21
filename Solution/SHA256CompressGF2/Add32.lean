@@ -107,6 +107,137 @@ theorem adder_correct (xv yv : ℕ → F p2) :
   rw [h32] at hinv hlt ⊢
   omega
 
+/-! ## The witness IR for the carry chain
+
+`carryVal` is a recursive accumulator, so an unrolled `FExpr` per bit would triple in
+size at every step. The generator uses the **closed form** of a binary ripple carry
+instead: over `F 2` the carry into position `k` is the arithmetic carry of the two
+operand values,
+
+  `val (carryVal xv yv k) = ((X % 2^k) + (Y % 2^k)) / 2^k`,   `X = Σ_{j<32} val (xv j)·2^j`,
+
+which `adder_invariant` and `sum_bits_lt` above already prove. Each operand sum is one
+authoring-time fold of 32 terms and the 31 carries share a single `mapRange` body, so
+the whole program is O(32) IR nodes. -/
+
+/-- A weighted bit sum truncated to its low `k` bits: the terms at positions `≥ k` are
+divisible by `2^k`, and the low part is `< 2^k`. -/
+theorem sum_bits_mod (f : ℕ → F p2) (k d : ℕ) :
+    (∑ j ∈ Finset.range (k + d), ZMod.val (f j) * 2 ^ j) % 2 ^ k
+      = ∑ j ∈ Finset.range k, ZMod.val (f j) * 2 ^ j := by
+  induction d with
+  | zero => exact Nat.mod_eq_of_lt (sum_bits_lt f k)
+  | succ e ih =>
+    rw [show k + (e + 1) = k + e + 1 from rfl, Finset.sum_range_succ]
+    obtain ⟨c, hc⟩ : (2 : ℕ) ^ k ∣ ZMod.val (f (k + e)) * 2 ^ (k + e) :=
+      Dvd.dvd.mul_left (pow_dvd_pow 2 (Nat.le_add_right k e)) _
+    rw [hc, Nat.add_mul_mod_self_left, ih]
+
+theorem sum_bits_mod_le (f : ℕ → F p2) {k n : ℕ} (hk : k ≤ n) :
+    (∑ j ∈ Finset.range n, ZMod.val (f j) * 2 ^ j) % 2 ^ k
+      = ∑ j ∈ Finset.range k, ZMod.val (f j) * 2 ^ j := by
+  obtain ⟨d, rfl⟩ : ∃ d, n = k + d := ⟨n - k, by omega⟩
+  exact sum_bits_mod f k d
+
+/-- Closed form of the ripple carry: the carry into position `k` is the arithmetic
+carry of the two operands' low-`k` bit sums. -/
+theorem val_carryVal (xv yv : ℕ → F p2) (k : ℕ) :
+    ZMod.val (carryVal xv yv k)
+      = ((∑ j ∈ Finset.range k, ZMod.val (xv j) * 2 ^ j)
+          + ∑ j ∈ Finset.range k, ZMod.val (yv j) * 2 ^ j) / 2 ^ k := by
+  rw [adder_invariant xv yv k, Nat.add_mul_div_right _ _ (Nat.two_pow_pos k),
+    Nat.div_eq_of_lt (sum_bits_lt _ k), Nat.zero_add]
+
+/-- The ℕ value of a 32-bit operand as a witness-IR expression: `Σ_j (at32 v j).val · 2^j`
+(authoring-time fold; the IR counterpart of the bit sums the adder proofs use). -/
+def bitsValIR (v : Var (fields 32) (F p2)) : Witgen.U64Expr (F p2) :=
+  (List.finRange 32).foldr (fun j acc => (at32 v j.val).val * (2 ^ j.val : ℕ) + acc) 0
+
+/-- The fold evaluates in the u64 sort, so it lands on `UInt64.ofNat` of the bit sum.
+This holds unconditionally (`UInt64.ofNat` commutes with `+` and `*`); the `< 2^32`
+bound that makes the truncation vacuous is produced once, in `eval_carryIR`. -/
+theorem eval_bitsValIR (v : Var (fields 32) (F p2)) (ctx : Witgen.Ctx (F p2)) :
+    (bitsValIR v).eval ctx
+      = UInt64.ofNat (∑ j ∈ Finset.range 32,
+          ZMod.val (Expression.eval ctx.env.toEnvironment (at32 v j)) * 2 ^ j) := by
+  rw [← Fin.sum_univ_eq_sum_range
+      (fun j => ZMod.val (Expression.eval ctx.env.toEnvironment (at32 v j)) * 2 ^ j) 32,
+    Fin.sum_univ_def, bitsValIR, List.sum_eq_foldr, List.foldr_map]
+  generalize List.finRange 32 = l
+  induction l with
+  | nil => rfl
+  | cons j l ih =>
+    simp only [circuit_norm] at ih
+    simp only [List.foldr_cons, circuit_norm, ih, UInt64.ofNat_add, UInt64.ofNat_mul]
+
+/-- Carry into position `k` as a witness-IR field expression, in closed form. -/
+def carryIR (x y : Var (fields 32) (F p2)) (k : Witgen.U64Expr (F p2)) : Witgen.FExpr (F p2) :=
+  (((bitsValIR x % Witgen.U64Expr.pow2 k) + (bitsValIR y % Witgen.U64Expr.pow2 k))
+    / Witgen.U64Expr.pow2 k).toField
+
+/-- Every intermediate of `carryIR` is below `2^33`, so none of the u64 wraps fire and the
+closed form is the honest carry. `hk` is what bounds the shift (`k ≤ 32 < 64`, so the
+shift amount is not reduced either). -/
+theorem eval_carryIR (x y : Var (fields 32) (F p2)) (ctx : Witgen.Ctx (F p2))
+    (k : Witgen.U64Expr (F p2)) (hk : (k.eval ctx).toNat ≤ 32) :
+    (carryIR x y k).eval ctx
+      = carryVal (fun j => Expression.eval ctx.env.toEnvironment (at32 x j))
+          (fun j => Expression.eval ctx.env.toEnvironment (at32 y j))
+          (k.eval ctx).toNat := by
+  set kn := (k.eval ctx).toNat with hkn
+  set Sx := ∑ j ∈ Finset.range 32,
+    ZMod.val (Expression.eval ctx.env.toEnvironment (at32 x j)) * 2 ^ j with hSx
+  set Sy := ∑ j ∈ Finset.range 32,
+    ZMod.val (Expression.eval ctx.env.toEnvironment (at32 y j)) * 2 ^ j with hSy
+  have hSx_lt : Sx < 2 ^ 32 := sum_bits_lt _ 32
+  have hSy_lt : Sy < 2 ^ 32 := sum_bits_lt _ 32
+  have hpow : ((1 : UInt64) <<< k.eval ctx).toNat = 2 ^ kn := by
+    rw [UInt64.toNat_shiftLeft, UInt64.toNat_one,
+      Nat.mod_eq_of_lt (show kn < 64 by omega), Nat.shiftLeft_eq, one_mul]
+    exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by norm_num) (by omega))
+  have hpow_pos : 0 < 2 ^ kn := Nat.two_pow_pos kn
+  have hpow_le : 2 ^ kn ≤ 2 ^ 32 := Nat.pow_le_pow_right (by norm_num) hk
+  -- the whole computation stays below `2^33`, so every u64 wrap is the identity
+  have hval : ((UInt64.ofNat Sx % (1 : UInt64) <<< k.eval ctx
+        + UInt64.ofNat Sy % (1 : UInt64) <<< k.eval ctx)
+      / (1 : UInt64) <<< k.eval ctx).toNat
+      = (Sx % 2 ^ kn + Sy % 2 ^ kn) / 2 ^ kn := by
+    have hx : (UInt64.ofNat Sx % (1 : UInt64) <<< k.eval ctx).toNat = Sx % 2 ^ kn := by
+      rw [UInt64.toNat_mod, hpow, UInt64.toNat_ofNat',
+        Nat.mod_eq_of_lt (show Sx < 2 ^ 64 by omega)]
+    have hy : (UInt64.ofNat Sy % (1 : UInt64) <<< k.eval ctx).toNat = Sy % 2 ^ kn := by
+      rw [UInt64.toNat_mod, hpow, UInt64.toNat_ofNat',
+        Nat.mod_eq_of_lt (show Sy < 2 ^ 64 by omega)]
+    have hxlt : Sx % 2 ^ kn < 2 ^ 32 := lt_of_lt_of_le (Nat.mod_lt _ hpow_pos) hpow_le
+    have hylt : Sy % 2 ^ kn < 2 ^ 32 := lt_of_lt_of_le (Nat.mod_lt _ hpow_pos) hpow_le
+    rw [UInt64.toNat_div, hpow, UInt64.toNat_add, hx, hy,
+      Nat.mod_eq_of_lt (by omega : Sx % 2 ^ kn + Sy % 2 ^ kn < 2 ^ 64)]
+  simp only [carryIR, Witgen.U64Expr.pow2, circuit_norm, eval_bitsValIR, ← hSx, ← hSy,
+    hval]
+  -- the truncated operand sums are the low-`kn` bit sums the adder invariant is stated over
+  rw [hSx, hSy, sum_bits_mod_le _ hk, sum_bits_mod_le _ hk, ← val_carryVal]
+  -- `circuit_norm` already turned `FiniteField.fromNat` into the `ℕ` cast
+  simp [ZMod.natCast_val]
+
+/-- Witness program for the 31 ripple carries `c₁..c₃₁`: one `mapRange` loop whose body
+is the closed form of the carry at the running index. -/
+def carriesIR (x y : Var (fields 32) (F p2)) : Witgen.VExpr (F p2) 31 :=
+  .range 31 fun i => carryIR x y (i + 1)
+
+/-- `carriesIR` computes exactly the values the adder proofs are stated over: cell `i`
+is the honest carry into bit `i+1`. -/
+theorem getElem_eval_carriesIR (x y : Var (fields 32) (F p2))
+    (env : ProverEnvironment (F p2)) (i : ℕ) (hi : i < 31) :
+    ((carriesIR x y).eval { env })[i]
+      = carryVal (fun j => Expression.eval env.toEnvironment (at32 x j))
+          (fun j => Expression.eval env.toEnvironment (at32 y j)) (i + 1) := by
+  have hk : (Witgen.U64Expr.eval (F := F p2)
+      { env := env, locals := #[], idx := i } (Witgen.U64Expr.idx + 1)).toNat = i + 1 := by
+    simp only [circuit_norm, UInt64.toNat_add, UInt64.toNat_ofNat', UInt64.toNat_one]
+  rw [carriesIR, Witgen.VExpr.range_def,
+    Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi,
+    eval_carryIR x y _ _ (by rw [hk]; omega), hk]
+
 /-! ## The circuit -/
 
 /-- Carry into bit `i` as an expression over the witnessed carries
@@ -119,8 +250,7 @@ def carryE (carries : Vector (Expression (F p2)) 31) (i : ℕ) : Expression (F p
 def main (input : Var Inputs (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
   let x := input.x
   let y := input.y
-  let carries ← witnessVector 31 (fun env => Vector.ofFn fun i : Fin 31 =>
-    carryVal (fun j => (at32 x j).eval env) (fun j => (at32 y j).eval env) (i.val + 1))
+  let carries ← Circuit.witnessVector 31 (carriesIR x y)
   Circuit.forEach (Vector.finRange 31) (fun i =>
     assertZero ((at31 carries i.val - carryE carries i.val)
       - (at32 x i.val + carryE carries i.val) * (at32 y i.val + carryE carries i.val)))
@@ -250,7 +380,8 @@ theorem completeness : Completeness (F p2) main Assumptions := by
                  (k + 1) := by
     intro k hk
     have h := h_env ⟨k, hk⟩
-    simp only [Vector.getElem_ofFn] at h
+    -- read the witnessed cell through the bridge lemma for the IR generator
+    rw [getElem_eval_carriesIR _ _ _ _ hk] at h
     exact h
   intro i
   obtain ⟨iv, hiv⟩ := i
@@ -299,17 +430,21 @@ theorem eval_mk_congr {x y : Var (fields 32) (F p2)} {env env' : ProverEnvironme
     (hx : eval env x = eval env' x) (hy : eval env y = eval env' y) :
     eval env (⟨x, y⟩ : Var Inputs (F p2)) = eval env' (⟨x, y⟩ : Var Inputs (F p2)) := by
   simp only [circuit_norm] at hx hy ⊢
-  rw [hx, hy]
+  exact ⟨hx, hy⟩
 
 theorem eval_x_congr {v : Var Inputs (F p2)} {env env' : ProverEnvironment (F p2)}
     (h : eval env v = eval env' v) : eval env v.x = eval env' v.x := by
-  have h2 := congrArg (fun s : Inputs (F p2) => s.x) h
-  simpa [circuit_norm] using h2
+  obtain ⟨x, y⟩ := v
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_y_congr {v : Var Inputs (F p2)} {env env' : ProverEnvironment (F p2)}
     (h : eval env v = eval env' v) : eval env v.y = eval env' v.y := by
-  have h2 := congrArg (fun s : Inputs (F p2) => s.y) h
-  simpa [circuit_norm] using h2
+  obtain ⟨x, y⟩ := v
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2
 
 /-- The witness generator reads the operands only through `at32`; agreement on the
 operand vector makes the whole reader function equal, hence the recursive
@@ -336,7 +471,10 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
-    rw [eval_at32_fun_congr (eval_x_congr h_input), eval_at32_fun_congr (eval_y_congr h_input)]
+    refine Vector.ext fun i hi => ?_
+    -- each witnessed cell reads the operands only through `at32` (bridge lemma)
+    rw [getElem_eval_carriesIR _ _ _ _ hi, getElem_eval_carriesIR _ _ _ _ hi,
+      eval_at32_fun_congr (eval_x_congr h_input), eval_at32_fun_congr (eval_y_congr h_input)]
   · intro _
     trivial
 

@@ -1,0 +1,23 @@
+{
+    "challenge_module": "Challenge.Instances.KeccakP800GF2.Challenge",
+    "solution_module": "Solution.KeccakP800GF2.Main",
+    "theorem_names": [
+        "Solution.KeccakP800GF2.soundness",
+        "Solution.KeccakP800GF2.completeness",
+        "Solution.KeccakP800GF2.mainCost",
+        "Solution.KeccakP800GF2.isR1CS_Cidentity",
+        "Solution.KeccakP800GF2.witgenIsIR",
+        "Solution.KeccakP800GF2.computableWitness",
+        "Solution.KeccakP800GF2.requirementsChannelsLawful"
+    ],
+    "definition_names": [
+        "Solution.KeccakP800GF2.main",
+        "Solution.KeccakP800GF2.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+    ],
+    "enable_nanoda": false
+}

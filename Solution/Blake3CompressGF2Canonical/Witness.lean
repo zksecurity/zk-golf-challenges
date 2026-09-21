@@ -77,7 +77,7 @@ theorem eval_xorInputs_mk_congr
     eval env (⟨x, y⟩ : Var XorRotateExact.Inputs (F p2)) =
       eval env' (⟨x, y⟩ : Var XorRotateExact.Inputs (F p2)) := by
   simp only [circuit_norm] at hx hy ⊢
-  rw [hx, hy]
+  exact ⟨hx, hy⟩
 
 theorem eval_quad_mk_congr
     {a b c d : Word (Expression (F p2))}
@@ -86,7 +86,7 @@ theorem eval_quad_mk_congr
     eval env (⟨a, b, c, d⟩ : Var Quad (F p2)) =
       eval env' (⟨a, b, c, d⟩ : Var Quad (F p2)) := by
   simp only [circuit_norm] at ha hb hc hd ⊢
-  rw [ha, hb, hc, hd]
+  exact ⟨ha, hb, hc, hd⟩
 
 theorem eval_gInputs_mk_congr
     {a b c d mx my : Word (Expression (F p2))}
@@ -96,7 +96,7 @@ theorem eval_gInputs_mk_congr
     eval env (⟨a, b, c, d, mx, my⟩ : Var GInputs (F p2)) =
       eval env' (⟨a, b, c, d, mx, my⟩ : Var GInputs (F p2)) := by
   simp only [circuit_norm] at ha hb hc hd hmx hmy ⊢
-  rw [ha, hb, hc, hd, hmx, hmy]
+  exact ⟨ha, hb, hc, hd, hmx, hmy⟩
 
 theorem eval_applyGInputs_mk_congr
     {state : State (Expression (F p2))} {mx my : Word (Expression (F p2))}
@@ -105,7 +105,7 @@ theorem eval_applyGInputs_mk_congr
     eval env (⟨state, mx, my⟩ : Var ApplyG.Inputs (F p2)) =
       eval env' (⟨state, mx, my⟩ : Var ApplyG.Inputs (F p2)) := by
   simp only [circuit_norm] at hs hmx hmy ⊢
-  rw [hs, hmx, hmy]
+  exact ⟨hs, hmx, hmy⟩
 
 theorem eval_roundInputs_mk_congr
     {state block : State (Expression (F p2))}
@@ -114,7 +114,7 @@ theorem eval_roundInputs_mk_congr
     eval env (⟨state, block⟩ : Var Round.Inputs (F p2)) =
       eval env' (⟨state, block⟩ : Var Round.Inputs (F p2)) := by
   simp only [circuit_norm] at hs hb ⊢
-  rw [hs, hb]
+  exact ⟨hs, hb⟩
 
 theorem eval_config_mk_congr
     {state block : State (Expression (F p2))}
@@ -123,7 +123,7 @@ theorem eval_config_mk_congr
     eval env (⟨state, block⟩ : Var Config (F p2)) =
       eval env' (⟨state, block⟩ : Var Config (F p2)) := by
   simp only [circuit_norm] at hs hb ⊢
-  rw [hs, hb]
+  exact ⟨hs, hb⟩
 
 theorem eval_finalizeInputs_mk_congr
     {state initial : State (Expression (F p2))}
@@ -132,107 +132,147 @@ theorem eval_finalizeInputs_mk_congr
     eval env (⟨state, initial⟩ : Var Finalize.Inputs (F p2)) =
       eval env' (⟨state, initial⟩ : Var Finalize.Inputs (F p2)) := by
   simp only [circuit_norm] at hs hi ⊢
-  rw [hs, hi]
+  exact ⟨hs, hi⟩
 
 theorem eval_input_bits_congr {x : Var Input (F p2)}
     (h : eval env x = eval env' x) : eval env x.bits = eval env' x.bits := by
-  have hx := congrArg (fun y : Input (F p2) => y.bits) h
-  simpa [circuit_norm] using hx
+  obtain ⟨bits⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Input.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h
 
 theorem eval_applyG_state_congr {x : Var ApplyG.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.state = eval env' x.state := by
-  have hx := congrArg (fun y : ApplyG.Inputs (F p2) => y.state) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, ApplyG.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_applyG_mx_congr {x : Var ApplyG.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.mx = eval env' x.mx := by
-  have hx := congrArg (fun y : ApplyG.Inputs (F p2) => y.mx) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, ApplyG.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.1
 
 theorem eval_applyG_my_congr {x : Var ApplyG.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.my = eval env' x.my := by
-  have hx := congrArg (fun y : ApplyG.Inputs (F p2) => y.my) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, ApplyG.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2
 
 theorem eval_round_state_congr {x : Var Round.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.state = eval env' x.state := by
-  have hx := congrArg (fun y : Round.Inputs (F p2) => y.state) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, block⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Round.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_round_block_congr {x : Var Round.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.block = eval env' x.block := by
-  have hx := congrArg (fun y : Round.Inputs (F p2) => y.block) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, block⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Round.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2
 
 theorem eval_config_state_congr {x : Var Config (F p2)}
     (h : eval env x = eval env' x) : eval env x.state = eval env' x.state := by
-  have hx := congrArg (fun y : Config (F p2) => y.state) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, block⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Config.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_config_block_congr {x : Var Config (F p2)}
     (h : eval env x = eval env' x) : eval env x.block = eval env' x.block := by
-  have hx := congrArg (fun y : Config (F p2) => y.block) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, block⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Config.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2
 
 theorem eval_finalize_state_congr {x : Var Finalize.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.state = eval env' x.state := by
-  have hx := congrArg (fun y : Finalize.Inputs (F p2) => y.state) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, initial⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Finalize.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_finalize_initial_congr {x : Var Finalize.Inputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.initial = eval env' x.initial := by
-  have hx := congrArg (fun y : Finalize.Inputs (F p2) => y.initial) h
-  simpa [circuit_norm] using hx
+  obtain ⟨state, initial⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Finalize.Inputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2
 
 theorem eval_g_a_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.a = eval env' x.a := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.a) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_g_b_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.b = eval env' x.b := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.b) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.1
 
 theorem eval_g_c_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.c = eval env' x.c := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.c) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.1
 
 theorem eval_g_d_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.d = eval env' x.d := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.d) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.2.1
 
 theorem eval_g_mx_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.mx = eval env' x.mx := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.mx) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.2.2.1
 
 theorem eval_g_my_congr {x : Var GInputs (F p2)}
     (h : eval env x = eval env' x) : eval env x.my = eval env' x.my := by
-  have hx := congrArg (fun y : GInputs (F p2) => y.my) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d, mx, my⟩ := x
+  simp only [circuit_norm, explicit_provable_type, GInputs.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.2.2.2
 
 theorem eval_quad_a_congr {x : Var Quad (F p2)}
     (h : eval env x = eval env' x) : eval env x.a = eval env' x.a := by
-  have hx := congrArg (fun y : Quad (F p2) => y.a) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Quad.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.1
 
 theorem eval_quad_b_congr {x : Var Quad (F p2)}
     (h : eval env x = eval env' x) : eval env x.b = eval env' x.b := by
-  have hx := congrArg (fun y : Quad (F p2) => y.b) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Quad.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.1
 
 theorem eval_quad_c_congr {x : Var Quad (F p2)}
     (h : eval env x = eval env' x) : eval env x.c = eval env' x.c := by
-  have hx := congrArg (fun y : Quad (F p2) => y.c) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Quad.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.1
 
 theorem eval_quad_d_congr {x : Var Quad (F p2)}
     (h : eval env x = eval env' x) : eval env x.d = eval env' x.d := by
-  have hx := congrArg (fun y : Quad (F p2) => y.d) h
-  simpa [circuit_norm] using hx
+  obtain ⟨a, b, c, d⟩ := x
+  simp only [circuit_norm, explicit_provable_type, Quad.mk.injEq] at h
+  simp only [circuit_norm, explicit_provable_type]
+  exact h.2.2.2
 
 theorem eval_freshQuad_of_agreesBelow (offset : ℕ) {k : ℕ}
     (hk : offset + 128 ≤ k) (h_agree : env.AgreesBelow k env') :
@@ -303,11 +343,15 @@ theorem computableWitnesses (r : ℕ) : (circuit r).ComputableWitnesses := by
     Pin32Canon.circuit input _ offset
     (fun _ _ h => eval_xorRotate_congr
       (by
-        have hx := congrArg Inputs.x h
-        simpa [circuit_norm] using hx)
+        obtain ⟨xv, yv⟩ := input
+        simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+        simp only [circuit_norm, explicit_provable_type]
+        exact h.1)
       (by
-        have hy := congrArg Inputs.y h
-        simpa [circuit_norm] using hy) r)
+        obtain ⟨xv, yv⟩ := input
+        simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h
+        simp only [circuit_norm, explicit_provable_type]
+        exact h.2) r)
     Pin32Canon.computableWitnesses env env'
 
 theorem subcircuit_localLength (r : ℕ) (input : Var Inputs (F p2)) (n : ℕ) :
@@ -341,10 +385,10 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     exact FormalCircuit.subcircuit_flatStructuralComputableWitnesses
       Pin32Canon.circuit input _ _ (fun _ _ h => by
         first
-        | have hx := congrArg Quad.a h; simpa [circuit_norm] using hx
-        | have hx := congrArg Quad.b h; simpa [circuit_norm] using hx
-        | have hx := congrArg Quad.c h; simpa [circuit_norm] using hx
-        | have hx := congrArg Quad.d h; simpa [circuit_norm] using hx)
+        | exact eval_quad_a_congr h
+        | exact eval_quad_b_congr h
+        | exact eval_quad_c_congr h
+        | exact eval_quad_d_congr h)
       Pin32Canon.computableWitnesses env env'
 
 theorem subcircuit_localLength (input : Var Quad (F p2)) (n : ℕ) :
@@ -884,6 +928,7 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
 theorem subcircuit_localLength (input : Var Config (F p2)) (n : ℕ) :
     (subcircuit circuit input).localLength n = 24384 := rfl
 
+set_option maxRecDepth 2000 in
 theorem eval_subOut_of_agreesBelow (input : Var Config (F p2))
     (n : ℕ) {k : ℕ} (hk : n + 24384 ≤ k)
     (h_agree : env.AgreesBelow k env') :
@@ -924,6 +969,7 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
 theorem subcircuit_localLength (input : Var Config (F p2)) (n : ℕ) :
     (subcircuit circuit input).localLength n = 48768 := rfl
 
+set_option maxRecDepth 2000 in
 theorem eval_subOut_of_agreesBelow (input : Var Config (F p2))
     (n : ℕ) {k : ℕ} (hk : n + 48768 ≤ k)
     (h_agree : env.AgreesBelow k env') :
@@ -1012,7 +1058,7 @@ theorem computableWitnessInternal : ∀ n input,
   intro n input hinput env env'
   change (main input).operations n |>.forAllFlat n
     { witness := fun k _ compute =>
-        env.AgreesBelow k env' → compute env = compute env' }
+        env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   have hstruct : FormalCircuitBase.Operations.StructuralComputableWitnesses
       input env env' n ((main input).operations n) := by
     unfold main
@@ -1044,7 +1090,7 @@ theorem computableWitnessInternal : ∀ n input,
   rw [← Operations.forAll_toFlat_iff] at hflat ⊢
   let targetCondition : Condition (F p2) :=
     { witness := fun k _ compute =>
-        env.AgreesBelow k env' → compute env = compute env' }
+        env.AgreesBelow k env' → compute.eval env = compute.eval env' }
   apply FlatOperation.forAll_implies (F := F p2) n ?_ hflat
   have himplies : ∀ (ops : List (FlatOperation (F p2))) (off : ℕ),
       n ≤ off →

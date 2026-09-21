@@ -133,7 +133,7 @@ theorem sha256Compress_split (state : Vector ℕ 8) (w : Vector ℕ 64) :
   rw [sha256Compress_eq]
   have h0 : applyRounds16 0 (win64 w 0) state = valState state w 16 := by
     have := applyRounds16_advance state w 0 (by omega)
-    simpa using this
+    simpa [show valState state w 0 = state from rfl] using this
   have h1 : applyRounds16 16 (win64 w 1) (valState state w 16) = valState state w 32 := by
     have := applyRounds16_advance state w 1 (by omega); simpa using this
   have h2 : applyRounds16 32 (win64 w 2) (valState state w 32) = valState state w 48 := by

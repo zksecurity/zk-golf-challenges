@@ -13,12 +13,15 @@ namespace XorLane
     Per bit: z = a + b − 2·a·b  (correct when a, b ∈ {0, 1}).
     Witnesses 64 output bits.
 
+    The witness program is the literal per-bit `ℕ`-xor of the two input bits' values,
+    cast back into the field; `completeness` and `computableWitnesses` read the
+    witnessed cells back in exactly that form.
+
     Shared building block: the θ and χ gadgets call `xorLane` through
     `XorLane.circuit`. -/
 def xorLane (a b : Var (fields 64) (F p)) : Circuit (F p) (Var (fields 64) (F p)) := do
-  let z ← witnessVector 64 fun env =>
-    Vector.ofFn fun (i : Fin 64) =>
-      ((env a[i]).val ^^^ (env b[i]).val : F p)
+  let z ← Circuit.witnessVector 64 (.lit <| .ofFn fun i : Fin 64 =>
+    (a[i].val ^^^ b[i].val).toField)
   Circuit.forEach (Vector.finRange 64) fun i =>
     assertZero (z[i] - a[i] - b[i] + 2 * a[i] * b[i])
   return z
@@ -81,6 +84,8 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [xorLane]
+  -- the witness program is a literal vector, so `circuit_proof_start` already reads the
+  -- witnessed cells back as the `ℕ`-xor of the two input bits
   obtain ⟨ha, hb⟩ := h_assumptions
   obtain ⟨h_input_a, h_input_b⟩ := h_input
   have h_ai : ∀ i : Fin 64, Expression.eval env.toEnvironment input_var_a[i.val] = input_a[i] := by
@@ -89,8 +94,13 @@ theorem completeness : Completeness (F p) main Assumptions := by
     intro i; have := Vector.ext_iff.mp h_input_b i i.isLt; simp [Vector.getElem_map] at this; exact this
   intro i
   have henv := h_env i
-  simp only [Vector.getElem_ofFn] at henv
-  rw [h_ai i, h_bi i] at henv
+  -- the u64 sort truncates at 2^64; both operands are bits, so the wrap is the identity
+  have hbnd : ∀ x : F p, (x = 0 ∨ x = 1) → x.val % 2 ^ 64 = x.val := by
+    rintro x (rfl | rfl)
+    · simp
+    · rw [ZMod.val_one_eq_one_mod]
+      exact Nat.mod_eq_of_lt (lt_of_le_of_lt (Nat.mod_le 1 p) (by norm_num))
+  rw [h_ai i, h_bi i, hbnd _ (ha i), hbnd _ (hb i)] at henv
   have hcast : ((input_a[i].val ^^^ input_b[i].val : ℕ) : F p) =
       input_a[i] + input_b[i] - 2 * input_a[i] * input_b[i] := by
     rw [← IsBool.xor_eq_val_xor (ha i) (hb i)]
@@ -100,6 +110,16 @@ theorem completeness : Completeness (F p) main Assumptions := by
 
 def circuit : FormalCircuit (F p) Inputs (fields 64) where
   main; elaborated; Assumptions; Spec; soundness; completeness
+
+/-- Componentwise characterization of "the two environments evaluate the input
+equally". `circuit_norm` no longer reduces `eval` on a struct *variable*, so this
+is proved once here by destructuring and reused by the callers. -/
+lemma eval_inputs_iff {input : Var Inputs (F p)} {env env' : ProverEnvironment (F p)} :
+    eval env input = eval env' input ↔
+      ((∀ x ∈ input.a, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x) ∧
+       (∀ x ∈ input.b, Expression.eval env.toEnvironment x = Expression.eval env'.toEnvironment x)) := by
+  obtain ⟨a, b⟩ := input
+  simp [circuit_norm, explicit_provable_type]
 
 theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
   intro offset input env env'
@@ -118,18 +138,15 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
-    simp [circuit_norm] at h_input
+    obtain ⟨ia, ib⟩ := input
+    simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h_input
     apply Vector.ext
     intro i hi
-    simp only [Vector.getElem_ofFn]
-    have ha :
-        Expression.eval env.toEnvironment input.a[i] =
-          Expression.eval env'.toEnvironment input.a[i] :=
-      h_input.1 _ (by simp)
-    have hb :
-        Expression.eval env.toEnvironment input.b[i] =
-          Expression.eval env'.toEnvironment input.b[i] :=
-      h_input.2 _ (by simp)
+    -- the witnessed cell is the literal xor, so it reads only the two input bits
+    simp only [circuit_norm]
+    have ha := Vector.ext_iff.mp h_input.1 i hi
+    have hb := Vector.ext_iff.mp h_input.2 i hi
+    simp only [Vector.getElem_map] at ha hb
     simp [ha, hb]
   · intro _
     trivial

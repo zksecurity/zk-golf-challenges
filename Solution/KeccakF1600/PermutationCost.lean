@@ -4,11 +4,12 @@ import Solution.KeccakF1600.Cost
 namespace Solution.KeccakF1600.Permutation
 
 open Challenge.Instances.KeccakF1600.Interface
-open Challenge.CostR1CS Solution.KeccakF1600.Cost
+open Challenge.CostR1CS Challenge.WitgenIR Solution.KeccakF1600.Cost
 
 set_option maxHeartbeats 4000000
 
 attribute [local irreducible] isR1CSRow r1csProducts operationsIsR1CS flatOperationsIsR1CS
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
 
 /-- The permutation costs 24 rounds × 6400 = 153600 witnesses / constraints. -/
 theorem costIs (state : Var KeccakBitState (F circomPrime)) :
@@ -17,6 +18,12 @@ theorem costIs (state : Var KeccakBitState (F circomPrime)) :
     CostIs.foldlRange (constant := foldConstant)
       (fun s i n => costIs_sub_round (rc i) (rc_lt i) s n)
   exact h
+
+/-- Every witness in the permutation is generated through the witness IR. -/
+theorem usesIR (state : Var KeccakBitState (F circomPrime)) :
+    UsesIRCirc (main state) :=
+  UsesIRCirc.foldlRange (constant := foldConstant)
+    (fun s i n => usesIR_sub_round (rc i) (rc_lt i) s n)
 
 /-- Every assert in the permutation is a single R1CS row for affine input. -/
 theorem r1cs (state : Var KeccakBitState (F circomPrime)) (hs : StateAffine state) :

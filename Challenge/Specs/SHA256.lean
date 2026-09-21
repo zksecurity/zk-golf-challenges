@@ -105,7 +105,7 @@ def pad {len : ℕ} (msg : Vector ℕ len) :
       0
     else
       bitLen / 2 ^ (8 * (totalLen - 1 - i.val)) % 256
-  (padded.toChunks ⟨64, by decide⟩).map bytesToBlock
+  (padded.toChunks 64).map bytesToBlock
 
 def sha256 {len : ℕ} (msg : Vector ℕ len) : Vector ℕ 8 :=
   (pad msg).foldl compressBlock H0

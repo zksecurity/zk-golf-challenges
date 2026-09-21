@@ -1,0 +1,25 @@
+{
+    "challenge_module": "Challenge.Instances.Bls12381G1ScalarMul.Challenge",
+    "solution_module": "Solution.Bls12381G1ScalarMul.Main",
+    "theorem_names": [
+        "Solution.Bls12381G1ScalarMul.soundness",
+        "Solution.Bls12381G1ScalarMul.completeness",
+        "Solution.Bls12381G1ScalarMul.mainCost",
+        "Solution.Bls12381G1ScalarMul.isR1CS",
+        "Solution.Bls12381G1ScalarMul.witgenIsIR",
+        "Solution.Bls12381G1ScalarMul.computableWitness",
+        "Solution.Bls12381G1ScalarMul.requirementsChannelsLawful"
+    ],
+    "definition_names": [
+        "Solution.Bls12381G1ScalarMul.main",
+        "Solution.Bls12381G1ScalarMul.elaborated"
+    ],
+    "permitted_axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice",
+        "Challenge.Instances.Bls12381G1ScalarMul.Interface.hCircomPrime",
+        "Specs.Bls12381G1.hPrime"
+    ],
+    "enable_nanoda": false
+}

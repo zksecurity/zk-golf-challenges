@@ -18,11 +18,14 @@ Witnesses 32 output bits.
 namespace And32
 
 /-- Bitwise AND of two 32-bit words.
-    Per bit: z = a · b  (correct when a, b ∈ {0, 1}). -/
+    Per bit: z = a · b  (correct when a, b ∈ {0, 1}).
+
+    The witness program is the literal per-bit field product of the two input bits;
+    `completeness` and `computableWitnesses` read the witnessed cells back as
+    `env a[i] * env b[i]`. -/
 def and32 (a b : Var (fields 32) (F p)) : Circuit (F p) (Var (fields 32) (F p)) := do
-  let z ← witnessVector 32 fun env =>
-    Vector.ofFn fun (i : Fin 32) =>
-      env a[i] * env b[i]
+  let z ← Circuit.witnessVector 32
+    (.lit <| .ofFn fun i : Fin 32 => (↑a[i.val] * ↑b[i.val] : Witgen.FExpr (F p)))
   Circuit.forEach (Vector.finRange 32) fun i =>
     assertZero (z[i] - a[i] * b[i])
   return z
@@ -66,7 +69,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
   have h_eq : ∀ i : Fin 32, env.get (i₀ + i.val) = input_a[i] * input_b[i] := by
     intro i
     have := h_holds i; rw [h_ai i, h_bi i] at this
-    exact sub_eq_zero.mp (by rw [sub_eq_add_neg]; exact this)
+    exact sub_eq_zero.mp this
   have h_z : Vector.map (Expression.eval env) (Vector.mapRange 32 fun i =>
       (var {index := i₀ + i} : Expression (F p)))
       = Vector.ofFn fun i : Fin 32 => env.get (i₀ + i.val) := by
@@ -88,9 +91,10 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [and32]
+  -- the witness program is a literal vector, so `circuit_proof_start` already reads the
+  -- witnessed cells back as `env a[i] * env b[i]`
   intro i
   have := h_env i
-  simp only [Vector.getElem_ofFn] at this
   rw [this]; ring
 
 def circuit : FormalCircuit (F p) Inputs (fields 32) where
@@ -113,17 +117,19 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
+    obtain ⟨a, b⟩ := input
     simp [circuit_norm] at h_input
     apply Vector.ext
     intro i hi
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal product, so it reads only the two input bits
+    simp only [circuit_norm]
     have ha :
-        Expression.eval env.toEnvironment input.a[i] =
-          Expression.eval env'.toEnvironment input.a[i] :=
+        Expression.eval env.toEnvironment a[i] =
+          Expression.eval env'.toEnvironment a[i] :=
       h_input.1 _ (by simp)
     have hb :
-        Expression.eval env.toEnvironment input.b[i] =
-          Expression.eval env'.toEnvironment input.b[i] :=
+        Expression.eval env.toEnvironment b[i] =
+          Expression.eval env'.toEnvironment b[i] :=
       h_input.2 _ (by simp)
     simp [ha, hb]
   · intro _

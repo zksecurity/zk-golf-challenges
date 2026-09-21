@@ -10,6 +10,7 @@ import Solution.SHA256CompressGF2Canonical.Theorems
 import Solution.SHA256CompressGF2.Cost
 import Solution.SHA256CompressGF2.MainTheorems
 import Challenge.Utils.CostR1CSCanonical
+import Challenge.Utils.WitgenIR
 
 /-!
 # Canonical cost and ordered identity-C (`IsCidCirc`) certificates
@@ -33,11 +34,11 @@ namespace Solution.SHA256CompressGF2.Add32Canon
 section
 
 /-- `at31` of a freshly witnessed 31-vector is the single output variable. -/
-theorem at31_wv (c : ProverEnvironment (F p2) → Vector (F p2) 31) (w i : ℕ) :
-    at31 ((Circuit.witnessVector 31 c).output w) i = Expression.var ⟨w + i % 31⟩ := by
-  show ((Circuit.witnessVector 31 c).output w)[i % 31]'(Nat.mod_lt _ (by norm_num)) = _
-  rw [show (Circuit.witnessVector 31 c).output w = varFromOffset (fields 31) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+theorem at31_wv (out : Witgen.VExpr (F p2) 31) (w i : ℕ) :
+    at31 ((Circuit.witnessVector 31 out).output w) i = Expression.var ⟨w + i % 31⟩ := by
+  show ((Circuit.witnessVector 31 out).output w)[i % 31]'(Nat.mod_lt _ (by norm_num)) = _
+  rw [show (Circuit.witnessVector 31 out).output w = varFromOffset (fields 31) w from rfl]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange]
 
 /-- The carry-into-bit expression is affine when the carry vector is affine. -/
 theorem carryE_affine {carries : Var (fields 31) (F p2)} (hc : AffineW carries) (i : ℕ) :
@@ -130,17 +131,38 @@ theorem balanced_sub (b : Var Inputs (F p2)) : Balanced (subcircuit circuit b) :
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+-- Keep the IR predicates opaque while *applying* the certificates: otherwise the
+-- unifier whnf's `operationsUseIR` on the flattened operation list and times out.
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-- Both witness sites (31 products, then 31 carries) are IR programs. -/
+theorem usesIR_main (b : Var Inputs (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 31 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.witnessVector 31 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+    UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var Inputs (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Add32Canon
 
 namespace Solution.SHA256CompressGF2
 section
 
 /-- Entry `i` of a freshly witnessed `n`-vector output is the single var `w+i`. -/
-theorem wv_getElem {n : ℕ} (c : ProverEnvironment (F p2) → Vector (F p2) n) (w i : ℕ)
+theorem wv_getElem {n : ℕ} (out : Witgen.VExpr (F p2) n) (w i : ℕ)
     (h : i < n) :
-    ((Circuit.witnessVector n c).output w)[i]'h = Expression.var ⟨w + i⟩ := by
-  rw [show (Circuit.witnessVector n c).output w = varFromOffset (fields n) w from rfl]
-  simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]
+    ((Circuit.witnessVector n out).output w)[i]'h = Expression.var ⟨w + i⟩ := by
+  rw [show (Circuit.witnessVector n out).output w = varFromOffset (fields n) w from rfl]
+  simp only [ProvableType.varFromOffset_fields, Vector.getElem_mapRange]
 
 theorem zxorOut_affine {v : Var (fields 96) (F p2)} {p : Var (fields 32) (F p2)}
     (hv : AffineW v) (hp : AffineW p) : AffineW (zxorOut v p) := by
@@ -204,6 +226,22 @@ theorem balanced_sub (b : Var (fields 96) (F p2)) : Balanced (subcircuit circuit
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 96) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 96) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Ch32Canon
 
 namespace Solution.SHA256CompressGF2
@@ -271,6 +309,22 @@ theorem balanced_sub (b : Var (fields 96) (F p2)) : Balanced (subcircuit circuit
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 96) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 96) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Maj32Canon
 
 namespace Solution.SHA256CompressGF2
@@ -336,6 +390,22 @@ theorem balanced_sub (b : Var (fields 32) (F p2)) : Balanced (subcircuit circuit
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 32) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 32 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 32) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Pin32Canon
 
 namespace Solution.SHA256CompressGF2
@@ -375,8 +445,7 @@ theorem costIs_main (b : Var (fields 128) (F p2)) : CostIs (main b) ⟨218, 218�
   fun n => (CostIs.bind (Add32Canon.costIs_sub _) fun _ =>
     CostIs.bind (Add32Canon.costIs_sub _) fun _ =>
     CostIs.bind (Add32Canon.costIs_sub _) fun _ =>
-    CostIs.bind (Pin32Canon.costIs_sub _) fun _ =>
-    CostIs.pure _ : CostIs (main b) (⟨62, 62⟩ + (⟨62, 62⟩ + (⟨62, 62⟩ + (⟨32, 32⟩ + ⟨0, 0⟩))))) n
+    Pin32Canon.costIs_sub _ : CostIs (main b) (⟨62, 62⟩ + (⟨62, 62⟩ + (⟨62, 62⟩ + ⟨32, 32⟩)))) n
 
 theorem costIs_sub (b : Var (fields 128) (F p2)) : CostIs (subcircuit circuit b) ⟨218, 218⟩ :=
   CostIs.subcircuit (fun n => costIs_main b n)
@@ -393,11 +462,9 @@ theorem isCidentity_main (b : Var (fields 128) (F p2)) (hb : AffineW b) :
   refine IsCidCirc.bind_out
     (add32canon_cid _ _ (affineW_out_add32canon _ _ h1 hw2 n1)
       (affineW_out_add32canon _ _ h0 hw0 n2)) (Add32Canon.balanced_sub _) fun n3 => ?_
-  refine IsCidCirc.bind
-    (Pin32Canon.isCidentity_sub _
-      (affineW_out_add32canon _ _ (affineW_out_add32canon _ _ h1 hw2 n1)
-        (affineW_out_add32canon _ _ h0 hw0 n2) n3)) (Pin32Canon.balanced_sub _) fun _ => ?_
-  exact IsCidCirc.pure _
+  exact Pin32Canon.isCidentity_sub _
+    (affineW_out_add32canon _ _ (affineW_out_add32canon _ _ h1 hw2 n1)
+      (affineW_out_add32canon _ _ h0 hw0 n2) n3)
 
 theorem isCidentity_sub (b : Var (fields 128) (F p2)) (hb : AffineW b) :
     IsCidCirc (subcircuit circuit b) :=
@@ -408,6 +475,24 @@ theorem balanced_sub (b : Var (fields 128) (F p2)) : Balanced (subcircuit circui
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-- 3 canonical adders + one pin, all IR-backed. -/
+theorem usesIR_main (b : Var (fields 128) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    Pin32Canon.usesIR_sub _
+
+theorem usesIR_sub (b : Var (fields 128) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.ScheduleStepCanon
 
 namespace Solution.SHA256CompressGF2.RoundCanon
@@ -494,6 +579,33 @@ theorem affineW_subOut (k : ℕ) (b : Var (fields 288) (F p2)) (hb : AffineW b) 
   exact outState_affine (affineW_mapRange_var _) (affineW_mapRange_var _) hb
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-- 7 canonical adders + canonical Ch + Maj + 2 pins, all IR-backed. -/
+theorem usesIR_main (k : ℕ) (b : Var (fields 288) (F p2)) : UsesIRCirc (main k b) := by
+  unfold main
+  exact UsesIRCirc.bind (Ch32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Maj32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Add32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Pin32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.bind (Pin32Canon.usesIR_sub _) fun _ =>
+    UsesIRCirc.pure _
+
+theorem usesIR_sub (k : ℕ) (b : Var (fields 288) (F p2)) :
+    UsesIRCirc (subcircuit (circuit k) b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main k b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.RoundCanon
 
 namespace Solution.SHA256CompressGF2.Pin256Canon
@@ -548,6 +660,22 @@ theorem balanced_sub (b : Var (fields 256) (F p2)) : Balanced (subcircuit circui
     simp [circuit_norm, subcircuit, circuit, elaborated]
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+theorem usesIR_main (b : Var (fields 256) (F p2)) : UsesIRCirc (main b) := by
+  unfold main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector 256 _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ n => UsesIRCirc.assertZero _ n) fun _ =>
+      UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 256) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Pin256Canon
 
 namespace Solution.SHA256CompressGF2
@@ -604,9 +732,10 @@ theorem isCidentity_main (b : Var (fields 512) (F p2)) (hb : AffineW b) :
   · exact fun n =>
       Balanced.of_costIs (CostIs.foldlRange (constant := constantLength)
         fun _ _ n' => (CostIs.bind (ScheduleStepCanon.costIs_sub _) fun _ => CostIs.pure _) n')
+        -- keep the loop body in `constantLength`'s normal form (a plain `simp` would
+        -- rewrite inside it and stop the fold lemmas from matching)
         (fun n' => by
-          simp [circuit_norm, ScheduleStepCanon.circuit, ScheduleStepCanon.elaborated,
-            Count.zero]) n
+          simp only [circuit_norm, Count.zero, scheduleStep_localLength]; rfl) n
   · exact fun n => IsCidCirc.pure _
 
 theorem isCidentity_sub (b : Var (fields 512) (F p2)) (hb : AffineW b) :
@@ -630,6 +759,24 @@ theorem affineW_subOut (b : Var (fields 512) (F p2)) (n : ℕ) :
     (affineW_varFromOffset _ _)
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-- The 16 schedule steps of the chunk are IR-backed. -/
+theorem usesIR_main (b : Var (fields 512) (F p2)) : UsesIRCirc (main b) := by
+  rw [main]
+  exact UsesIRCirc.bind
+    (UsesIRCirc.foldlRange (constant := constantLength) fun _ _ n =>
+      (UsesIRCirc.bind (ScheduleStepCanon.usesIR_sub _) fun _ => UsesIRCirc.pure _) n)
+    fun _ => UsesIRCirc.pure _
+
+theorem usesIR_sub (b : Var (fields 512) (F p2)) : UsesIRCirc (subcircuit circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Sched16Canon
 
 namespace Solution.SHA256CompressGF2
@@ -696,6 +843,25 @@ theorem affineW_subOut (r0 : ℕ) (b : Var (fields 768) (F p2)) (n : ℕ) :
   exact affineW_mapRange_var _
 
 end
+section WitgenIR
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-- The 16 rounds of the chunk plus the output pin are IR-backed. -/
+theorem usesIR_main (r0 : ℕ) (b : Var (fields 768) (F p2)) : UsesIRCirc (main r0 b) := by
+  rw [main]
+  exact UsesIRCirc.bind
+    (UsesIRCirc.foldlRange (constant := constantLength r0 b) fun _ _ n =>
+      RoundCanon.usesIR_sub _ _ n)
+    fun _ => Pin256Canon.usesIR_sub _
+
+theorem usesIR_sub (r0 : ℕ) (b : Var (fields 768) (F p2)) :
+    UsesIRCirc (subcircuit (circuit r0) b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_main r0 b n)
+
+end WitgenIR
+
 end Solution.SHA256CompressGF2.Rounds16Canon
 
 namespace Solution.SHA256CompressGF2Canonical

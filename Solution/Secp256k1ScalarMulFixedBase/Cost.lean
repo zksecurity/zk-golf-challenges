@@ -45,27 +45,83 @@ open Challenge.CostR1CS
 
 /-! ## Generic subcircuit / witness leaves -/
 
-/-- A `ProvableType.witness` over `α` allocates exactly `size α` cells and no
+/-- A struct-valued `witness` over `α` allocates exactly `size α` cells and no
 constraints. Its operation list is `[.witness (size α) ..]`, same shape as
-`witnessVector`. -/
+`Circuit.witnessVector`. -/
 theorem CostIs.provableWitness {α : TypeMap} [ProvableType α]
-    (compute : ProverEnvironment (F circomPrime) → α (F circomPrime)) :
-    CostIs (ProvableType.witness (α := α) compute) ⟨size α, 0⟩ := by
+    (xs : α (Witgen.FExpr (F circomPrime))) :
+    CostIs (witness (F := F circomPrime) (value := α) (var := Var α) xs) ⟨size α, 0⟩ := by
   intro n; rfl
 
 theorem IsR1CSCirc.provableWitness {α : TypeMap} [ProvableType α]
-    (compute : ProverEnvironment (F circomPrime) → α (F circomPrime)) :
-    IsR1CSCirc (ProvableType.witness (α := α) compute) := by
+    (xs : α (Witgen.FExpr (F circomPrime))) :
+    IsR1CSCirc (witness (F := F circomPrime) (value := α) (var := Var α) xs) := by
   intro n; trivial
 
-/-- The output of a `ProvableType.witness` is a fresh `varFromOffset`, hence
+/-- The output of a struct-valued `witness` is a fresh `varFromOffset`, hence
 affine at every offset. -/
 theorem affineProvable_provableWitness {α : TypeMap} [ProvableType α]
-    (compute : ProverEnvironment (F circomPrime) → α (F circomPrime)) (n : ℕ) :
-    AffineProvable ((ProvableType.witness (α := α) compute).output n) := by
-  rw [show ((ProvableType.witness (α := α) compute).output n)
+    (xs : α (Witgen.FExpr (F circomPrime))) (n : ℕ) :
+    AffineProvable ((witness (F := F circomPrime) (value := α) (var := Var α) xs).output n) := by
+  rw [show ((witness (F := F circomPrime) (value := α) (var := Var α) xs).output n)
         = varFromOffset α n from rfl]
   exact affineProvable_varFromOffset n
+
+/-- A `witnessVectorProgram` over `m` cells: same operation shape, `m` cells, no
+constraints. -/
+theorem CostIs.witnessProgramVec (m : ℕ)
+    (prog : Witgen.M (F circomPrime) (Witgen.VExpr (F circomPrime) m)) :
+    CostIs (witnessVectorProgram m prog) ⟨m, 0⟩ := by
+  intro n; rfl
+
+theorem IsR1CSCirc.witnessProgramVec (m : ℕ)
+    (prog : Witgen.M (F circomPrime) (Witgen.VExpr (F circomPrime) m)) :
+    IsR1CSCirc (witnessVectorProgram m prog) := by
+  intro n; trivial
+
+/-- The output of a `witnessVectorProgram` is a fresh `varFromOffset`, hence
+affine at every offset. -/
+theorem affineW_witnessProgramVec {m : ℕ}
+    (prog : Witgen.M (F circomPrime) (Witgen.VExpr (F circomPrime) m)) (n : ℕ) :
+    AffineW ((witnessVectorProgram m prog).output n) := by
+  rw [show ((witnessVectorProgram m prog).output n)
+        = varFromOffset (fields m) n from rfl]
+  exact affineW_varFromOffset _ _
+
+/-- A raw `witnessIR` site over `m` cells: the shape a *sealed* program's IR is used
+at, where the program must never be unfolded (see `DivOrZero.lamIR`). -/
+theorem CostIs.witnessIRVec (m : ℕ) (ir : Witgen.WitgenIR (F circomPrime) m) :
+    CostIs (witnessIR (fields m) ir) ⟨m, 0⟩ := by
+  intro n; rfl
+
+theorem IsR1CSCirc.witnessIRVec (m : ℕ) (ir : Witgen.WitgenIR (F circomPrime) m) :
+    IsR1CSCirc (witnessIR (fields m) ir) := by
+  intro n; trivial
+
+theorem affineW_witnessIRVec {m : ℕ} (ir : Witgen.WitgenIR (F circomPrime) m) (n : ℕ) :
+    AffineW ((witnessIR (fields m) ir).output n) := by
+  rw [show ((witnessIR (fields m) ir).output n) = varFromOffset (fields m) n from rfl]
+  exact affineW_varFromOffset _ _
+
+/-- A scalar `witnessProgram` at the `field` type: the same single-cell operation
+`Circuit.witnessField` is, with an IR program in place of a bare expression. -/
+theorem CostIs.witnessProgramField
+    (prog : Witgen.M (F circomPrime) (Witgen.FExpr (F circomPrime))) :
+    CostIs (witnessProgram (F := F circomPrime) (value := field) (var := Expression) prog)
+      ⟨1, 0⟩ := by
+  intro n; rfl
+
+theorem IsR1CSCirc.witnessProgramField
+    (prog : Witgen.M (F circomPrime) (Witgen.FExpr (F circomPrime))) :
+    IsR1CSCirc (witnessProgram (F := F circomPrime) (value := field) (var := Expression)
+      prog) := by
+  intro n; trivial
+
+/-- The output of a scalar `witnessProgram` is a fresh cell, affine. -/
+theorem affine_witnessProgramField
+    (prog : Witgen.M (F circomPrime) (Witgen.FExpr (F circomPrime))) (n : ℕ) :
+    Affine ((witnessProgram (F := F circomPrime) (value := field) (var := Expression)
+      prog).output n) := Affine.var _
 
 /-- Invoking a `GeneralFormalCircuit` as a subcircuit costs exactly its `main`'s
 count (same operation shape as `CostIs.subcircuit`). -/
@@ -123,8 +179,9 @@ theorem costIs_toBits (n : ℕ) (x : Expression (F circomPrime)) :
     (show CostIs (x === Utils.Bits.fieldFromBitsExpr bits) ⟨0, 1⟩ from ?_) fun _ => CostIs.pure _
   show CostIs (Expression.assertEquals x (Utils.Bits.fieldFromBitsExpr bits)) ⟨0, 1⟩
   unfold Expression.assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
   refine CostIs.assertion (K := ⟨0, 1⟩) fun m => ?_
-  show operationCount ((Gadgets.Equality.main (M := id) (x, Utils.Bits.fieldFromBitsExpr bits)).operations m) = _
+  show operationCount ((Gadgets.Equality.main (M := field) (x, Utils.Bits.fieldFromBitsExpr bits)).operations m) = _
   unfold Gadgets.Equality.main
   simpa using (CostIs.forEach (m := 1) (fun a k => CostIs.assertZero _ k) m)
 
@@ -167,9 +224,10 @@ theorem isR1CS_toBits (n : ℕ) (x : Expression (F circomPrime)) (hx : Affine x)
   · show IsR1CSCirc (x === Utils.Bits.fieldFromBitsExpr _)
     show IsR1CSCirc (Expression.assertEquals x (Utils.Bits.fieldFromBitsExpr _))
     unfold Expression.assertEquals
-    refine IsR1CSCirc.assertion (circuit := Gadgets.Equality.circuit id) fun k => ?_
-    show operationsIsR1CS ((Gadgets.Equality.main (M := id)
-      (x, Utils.Bits.fieldFromBitsExpr ((Circuit.witnessVector n _).output w))).operations k)
+    letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
+    refine IsR1CSCirc.assertion (circuit := Gadgets.Equality.circuit field) fun k => ?_
+    show operationsIsR1CS ((Gadgets.Equality.main (M := field)
+      (x, Utils.Bits.fieldFromBitsExpr ((witnessVector n _).output w))).operations k)
     unfold Gadgets.Equality.main
     refine (IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) (m := 1) fun i j => ?_) k
     refine IsR1CSCirc.assertZero ?_ j
@@ -279,25 +337,16 @@ theorem isR1CS_assertion_equal (P : BigIntParams circomPrime m)
     IsR1CSCirc (assertion (Equal.circuit P) input) :=
   IsR1CSCirc.assertion (fun n => isR1CS_equal input hl hr n)
 
-/-- The output of a `ProvableType.witness (α := BigInt k)` is a fresh
+/-- The output of a `Circuit.witnessVector` over `BigInt k` is a fresh
 `varFromOffset`, hence affine at every offset. -/
-theorem affineW_provableWitness_bigInt {k : ℕ}
-    (compute : ProverEnvironment (F circomPrime) → BigInt k (F circomPrime)) (nd : ℕ) :
-    AffineW ((ProvableType.witness (α := BigInt k) compute).output nd :
-      Var (BigInt k) (F circomPrime)) := by
-  rw [show ((ProvableType.witness (α := BigInt k) compute).output nd : Var (BigInt k) (F circomPrime))
-        = varFromOffset (BigInt k) nd from rfl]
-  exact affineW_varFromOffset _ _
-
-theorem isR1CS_provableWitness_bigInt {k : ℕ}
-    (compute : ProverEnvironment (F circomPrime) → BigInt k (F circomPrime)) :
-    IsR1CSCirc (ProvableType.witness (α := BigInt k) compute) :=
-  IsR1CSCirc.provableWitness _
+theorem affineW_provableWitness_bigInt {k : ℕ} (out : Witgen.VExpr (F circomPrime) k) (nd : ℕ) :
+    AffineW ((Circuit.witnessVector k out).output nd : Var (BigInt k) (F circomPrime)) :=
+  affineW_witnessVector_output k out nd
 
 /-- `IsR1CSCirc.witnessVector` packaged so it unifies as the first argument of
-`bind_out` (avoids the `compute` metavariable elaboration-order issue). -/
-theorem isR1CS_witnessVec (k : ℕ) (c : ProverEnvironment (F circomPrime) → Vector (F circomPrime) k) :
-    IsR1CSCirc (Circuit.witnessVector k c) := IsR1CSCirc.witnessVector k c
+`bind_out` (avoids the `out` metavariable elaboration-order issue). -/
+theorem isR1CS_witnessVec (k : ℕ) (out : Witgen.VExpr (F circomPrime) k) :
+    IsR1CSCirc (Circuit.witnessVector k out) := IsR1CSCirc.witnessVector k out
 
 /-! ## `LessThan` -/
 
@@ -314,9 +363,9 @@ theorem costIs_lessThan (P : BigIntParams circomPrime m) [NeZero m]
             (⟨m * 0, m * 1⟩ + (⟨m * 0, m * 1⟩ + (⟨0, 1⟩ + Count.zero))))) from by
       simp only [Count.zero]; congr 1 <;> simp only [Count.add_allocations, Count.add_constraints] <;> ring]
   unfold LessThan.main
-  refine CostIs.bind (CostIs.provableWitness _) fun d => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec m _) fun d => ?_
   refine CostIs.bind (costIs_assertion_normalize P _) fun _ => ?_
-  refine CostIs.bind (CostIs.witnessVector m _) fun carry => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec m _) fun carry => ?_
   refine CostIs.bind (CostIs.forEach fun a n => CostIs.assertZero _ n) fun _ => ?_
   refine CostIs.bind (CostIs.forEach fun a n => CostIs.assertZero _ n) fun _ => ?_
   rw [dif_neg hne]
@@ -328,16 +377,16 @@ theorem isR1CS_lessThan (P : BigIntParams circomPrime m) [NeZero m]
     IsR1CSCirc (LessThan.main P input) := by
   have hne : ¬ (m = 0) := NeZero.ne m
   unfold LessThan.main
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nd => ?_
-  refine IsR1CSCirc.bind (isR1CS_assertion_normalize P _ (affineW_provableWitness_bigInt _ nd))
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec _ _) fun nd => ?_
+  refine IsR1CSCirc.bind (isR1CS_assertion_normalize P _ (affineW_witnessProgramVec _ nd))
     fun _ => ?_
-  refine IsR1CSCirc.bind_out (isR1CS_witnessVec m _) fun nc => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec m _) fun nc => ?_
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · -- boolean forEach: each `c * (c - 1)` is a single row
     refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun i k => ?_
     refine IsR1CSCirc.assertZero ?_ k
-    exact isR1CSRow_mul (affineW_witnessVector_output _ _ _ i.val i.isLt)
-      (Affine.sub (affineW_witnessVector_output _ _ _ i.val i.isLt) (Affine.const 1))
+    exact isR1CSRow_mul (affineW_witnessProgramVec _ _ i.val i.isLt)
+      (Affine.sub (affineW_witnessProgramVec _ _ i.val i.isLt) (Affine.const 1))
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · -- linear forEach: each constraint is affine
     refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun i k => ?_
@@ -345,18 +394,18 @@ theorem isR1CS_lessThan (P : BigIntParams circomPrime m) [NeZero m]
     rw [Vector.getElem_mapFinRange]
     refine isR1CSRow_of_affine ?_
     refine Affine.sub (Affine.sub (Affine.add (Affine.add (Affine.add
-      (hl i.val i.isLt) (affineW_provableWitness_bigInt _ nd i.val i.isLt)) ?_) ?_)
+      (hl i.val i.isLt) (affineW_witnessProgramVec _ nd i.val i.isLt)) ?_) ?_)
       (hr i.val i.isLt))
-      (Affine.mul_fconst _ (affineW_witnessVector_output _ _ _ i.val i.isLt))
+      (Affine.mul_fconst _ (affineW_witnessProgramVec _ _ i.val i.isLt))
     · split
       · exact Affine.zero
-      · exact affineW_witnessVector_output _ _ _ _ (by omega)
+      · exact affineW_witnessProgramVec _ _ _ (by omega)
     · split
       · exact Affine.const 1
       · exact Affine.zero
   rw [dif_neg hne]
   refine IsR1CSCirc.bind (IsR1CSCirc.assertZero
-    (isR1CSRow_of_affine (affineW_witnessVector_output _ _ _ (m - 1) (by omega))))
+    (isR1CSRow_of_affine (affineW_witnessProgramVec _ _ (m - 1) (by omega))))
     fun _ => IsR1CSCirc.pure _
 
 theorem costIs_assertion_lessThan (P : BigIntParams circomPrime m) [NeZero m]
@@ -388,7 +437,7 @@ theorem costIs_eqViaCarries (P : BigIntParams circomPrime m) [NeZero m]
       simp only [Count.zero]
       congr 1; simp only [Count.add_constraints]; ring]
   unfold EqViaCarries.main
-  refine CostIs.bind (CostIs.witnessVector (2 * m - 1) _) fun carry => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec (2 * m - 1) _) fun carry => ?_
   refine CostIs.bind (CostIs.forEach fun a n => costIs_assertion_rangeCheck P.W P.hW a n) fun _ => ?_
   refine CostIs.bind (CostIs.forEach fun a n => CostIs.assertZero _ n) fun _ => ?_
   rw [dif_neg hne]
@@ -401,12 +450,12 @@ theorem isR1CS_eqViaCarries (P : BigIntParams circomPrime m) [NeZero m]
   have hM : 0 < 2 * m - 1 := by have := Nat.pos_of_neZero m; omega
   have hne : ¬ (2 * m - 1 = 0) := by omega
   unfold EqViaCarries.main
-  refine IsR1CSCirc.bind_out (isR1CS_witnessVec (2 * m - 1) _) fun nc => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec (2 * m - 1) _) fun nc => ?_
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · -- range-check each carry: `W`-bit, R1CS since carry entries are affine
     refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun i k => ?_
     exact isR1CS_assertion_rangeCheck P.W P.hW _
-      (affineW_witnessVector_output _ _ _ i.val i.isLt) k
+      (affineW_witnessProgramVec _ _ i.val i.isLt) k
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · -- per-index linear constraint is affine
     refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun i k => ?_
@@ -414,15 +463,15 @@ theorem isR1CS_eqViaCarries (P : BigIntParams circomPrime m) [NeZero m]
     rw [Vector.getElem_mapFinRange]
     refine isR1CSRow_of_affine ?_
     refine Affine.sub (Affine.sub (Affine.add (hl i.val i.isLt) ?_) (hr i.val i.isLt))
-      (Affine.mul_fconst _ (Affine.sub (affineW_witnessVector_output _ _ _ i.val i.isLt)
+      (Affine.mul_fconst _ (Affine.sub (affineW_witnessProgramVec _ _ i.val i.isLt)
         (Affine.const _)))
     · split
       · exact Affine.zero
-      · exact Affine.sub (affineW_witnessVector_output _ _ _ _ (by omega)) (Affine.const _)
+      · exact Affine.sub (affineW_witnessProgramVec _ _ _ (by omega)) (Affine.const _)
   rw [dif_neg hne]
   refine IsR1CSCirc.bind (IsR1CSCirc.assertZero
     (isR1CSRow_of_affine (Affine.sub
-      (affineW_witnessVector_output _ _ _ (2 * m - 1 - 1) (by omega)) (Affine.const _))))
+      (affineW_witnessProgramVec _ _ (2 * m - 1 - 1) (by omega)) (Affine.const _))))
     fun _ => IsR1CSCirc.pure _
 
 theorem costIs_assertion_eqViaCarries (P : BigIntParams circomPrime m)
@@ -486,7 +535,7 @@ theorem costIs_witnessedMul [NeZero m] (a b : Var (BigInt m) (F circomPrime)) :
       simp only [Count.zero]; congr 1
       simp only [Count.add_constraints]; ring]
   unfold MulMod.witnessedMul
-  refine CostIs.bind (CostIs.provableWitness _) fun pp => ?_
+  refine CostIs.bind (CostIs.witnessVector (m * m) _) fun pp => ?_
   refine CostIs.bind (CostIs.forEach fun a k => CostIs.assertZero _ k) fun _ => ?_
   exact CostIs.pure _
 
@@ -496,7 +545,7 @@ theorem isR1CS_witnessedMul [NeZero m] (a b : Var (BigInt m) (F circomPrime))
     (ha : AffineW a) (hb : AffineW b) :
     IsR1CSCirc (MulMod.witnessedMul a b) := by
   unfold MulMod.witnessedMul
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.provableWitness _) fun npp => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector (m * m) _) fun npp => ?_
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun t k => ?_
     refine IsR1CSCirc.assertZero ?_ k
@@ -520,8 +569,8 @@ theorem costIs_mulMod (P : BigIntParams circomPrime m) [NeZero m]
     (input : Var (MulMod.Inputs m) (F circomPrime)) :
     CostIs (MulMod.main P input) (mulModCount m P.B P.W) := by
   unfold MulMod.main mulModCount
-  refine CostIs.bind (CostIs.provableWitness _) fun q => ?_
-  refine CostIs.bind (CostIs.provableWitness _) fun r => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec m _) fun q => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec m _) fun r => ?_
   refine CostIs.bind (costIs_assertion_normalize P _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_normalize P _) fun _ => ?_
   refine CostIs.bind (costIs_witnessedMul _ _) fun Pc => ?_
@@ -547,16 +596,16 @@ theorem isR1CS_mulMod (P : BigIntParams circomPrime m) [NeZero m]
     (ha : AffineW input.a) (hb : AffineW input.b) (hn : AffineW input.modulus) :
     IsR1CSCirc (MulMod.main P input) := by
   unfold MulMod.main
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nq => ?_
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nr => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec _ _) fun nq => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec _ _) fun nr => ?_
   refine IsR1CSCirc.bind
-    (isR1CS_assertion_normalize P _ (affineW_provableWitness_bigInt _ nq)) fun _ => ?_
+    (isR1CS_assertion_normalize P _ (affineW_witnessProgramVec _ nq)) fun _ => ?_
   refine IsR1CSCirc.bind
-    (isR1CS_assertion_normalize P _ (affineW_provableWitness_bigInt _ nr)) fun _ => ?_
+    (isR1CS_assertion_normalize P _ (affineW_witnessProgramVec _ nr)) fun _ => ?_
   -- witness the two product matrices: `a·b` and `q·n` (each `m·m` rank-1 rows)
   refine IsR1CSCirc.bind_out (isR1CS_witnessedMul _ _ ha hb) fun nPc => ?_
   refine IsR1CSCirc.bind_out
-    (isR1CS_witnessedMul _ _ (affineW_provableWitness_bigInt _ nq) hn) fun nSqn => ?_
+    (isR1CS_witnessedMul _ _ (affineW_witnessProgramVec _ nq) hn) fun nSqn => ?_
   -- EqViaCarries on the affine coefficient vectors `Pc = bigIntMulVars (a·b)` and
   -- `S = bigIntMulVars (q·n) + r` (both linear forms over witnessed cells).
   refine IsR1CSCirc.bind (isR1CS_assertion_eqViaCarries P _ ?_ ?_) fun _ => ?_
@@ -567,7 +616,7 @@ theorem isR1CS_mulMod (P : BigIntParams circomPrime m) [NeZero m]
     rw [Vector.getElem_mapFinRange]
     split
     · exact Affine.add (affineW_witnessedMul_output _ _ _ i hi)
-        (affineW_provableWitness_bigInt _ nr i (by assumption))
+        (affineW_witnessProgramVec _ nr i (by assumption))
     · exact affineW_witnessedMul_output _ _ _ i hi
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · -- LessThan {r, n}: r is the witnessed remainder (affine), n is affine
@@ -640,8 +689,9 @@ theorem costIs_assertEqField (x y : Expression (F circomPrime)) :
     CostIs (x === y) ⟨0, 1⟩ := by
   show CostIs (Expression.assertEquals x y) ⟨0, 1⟩
   unfold Expression.assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
   refine CostIs.assertion (K := ⟨0, 1⟩) fun m => ?_
-  show operationCount ((Gadgets.Equality.main (M := id) (x, y)).operations m) = _
+  show operationCount ((Gadgets.Equality.main (M := field) (x, y)).operations m) = _
   unfold Gadgets.Equality.main
   simpa using (CostIs.forEach (m := 1) (fun a k => CostIs.assertZero _ k) m)
 
@@ -650,8 +700,9 @@ theorem isR1CS_assertEqField {x y : Expression (F circomPrime)}
     (h : isR1CSRow (x - y)) : IsR1CSCirc (x === y) := by
   show IsR1CSCirc (Expression.assertEquals x y)
   unfold Expression.assertEquals
-  refine IsR1CSCirc.assertion (circuit := Gadgets.Equality.circuit id) fun k => ?_
-  show operationsIsR1CS ((Gadgets.Equality.main (M := id) (x, y)).operations k)
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
+  refine IsR1CSCirc.assertion (circuit := Gadgets.Equality.circuit field) fun k => ?_
+  show operationsIsR1CS ((Gadgets.Equality.main (M := field) (x, y)).operations k)
   unfold Gadgets.Equality.main
   refine (IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) (m := 1) fun i j => ?_) k
   refine IsR1CSCirc.assertZero ?_ j
@@ -662,7 +713,7 @@ theorem isR1CS_assertEqField {x y : Expression (F circomPrime)}
 theorem costIs_assignEqField (rhs : Expression (F circomPrime)) :
     CostIs (HasAssignEq.assignEq (F := F circomPrime) rhs) ⟨1, 1⟩ := by
   rw [show (⟨1, 1⟩ : Count) = ⟨1, 0⟩ + (⟨0, 1⟩ + Count.zero) from by decide]
-  exact CostIs.bind (CostIs.witnessField _) fun w =>
+  exact CostIs.bind (CostIs.witnessIR field _) fun w =>
     CostIs.bind (costIs_assertEqField _ rhs) fun _ => CostIs.pure _
 
 /-- `let w <== rhs` is single-row R1CS whenever the row `w − rhs` is, for the
@@ -670,7 +721,7 @@ fresh cell `w`. -/
 theorem isR1CS_assignEqField (rhs : Expression (F circomPrime))
     (h : ∀ w : Variable (F circomPrime), isR1CSRow (Expression.var w - rhs)) :
     IsR1CSCirc (HasAssignEq.assignEq (F := F circomPrime) rhs) := by
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessField _) fun k => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessIR field _) fun k => ?_
   exact IsR1CSCirc.bind (isR1CS_assertEqField (h ⟨k⟩)) fun _ => IsR1CSCirc.pure _
 
 /-- The output of `let w <== rhs` is the fresh cell `w`, affine. -/
@@ -687,6 +738,7 @@ theorem costIs_assertEqFieldM (x y : Var field (F circomPrime)) :
     CostIs (x === y) ⟨0, 1⟩ := by
   show CostIs (assertEquals (M := field) x y) ⟨0, 1⟩
   unfold assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
   refine CostIs.assertion (K := ⟨0, 1⟩) fun n => ?_
   show operationCount ((Gadgets.Equality.main (M := field) (x, y)).operations n) = _
   unfold Gadgets.Equality.main
@@ -696,6 +748,7 @@ theorem isR1CS_assertEqFieldM {x y : Var field (F circomPrime)}
     (h : isR1CSRow (x - y)) : IsR1CSCirc (x === y) := by
   show IsR1CSCirc (assertEquals (M := field) x y)
   unfold assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
   refine IsR1CSCirc.assertion (circuit := Gadgets.Equality.circuit field) fun k => ?_
   show operationsIsR1CS ((Gadgets.Equality.main (M := field) (x, y)).operations k)
   unfold Gadgets.Equality.main
@@ -705,20 +758,23 @@ theorem isR1CS_assertEqFieldM {x y : Var field (F circomPrime)}
   exact h
 
 theorem costIs_assignEqFieldM (rhs : Var field (F circomPrime)) :
-    CostIs (HasAssignEq.assignEq (β := field (Expression (F circomPrime))) rhs) ⟨1, 1⟩ := by
+    CostIs (@HasAssignEq.assignEq (Var field (F circomPrime)) (F circomPrime) _
+      (instHasAssignEqExpression_1 (M := field)) rhs) ⟨1, 1⟩ := by
   rw [show (⟨1, 1⟩ : Count) = ⟨1, 0⟩ + (⟨0, 1⟩ + Count.zero) from by decide]
-  exact CostIs.bind (CostIs.provableWitness (α := field) _) fun w =>
+  exact CostIs.bind (CostIs.witnessIR field _) fun w =>
     CostIs.bind (costIs_assertEqFieldM _ rhs) fun _ => CostIs.pure _
 
 theorem isR1CS_assignEqFieldM (rhs : Var field (F circomPrime))
     (h : ∀ w : Variable (F circomPrime), isR1CSRow (Expression.var w - rhs)) :
-    IsR1CSCirc (HasAssignEq.assignEq (β := field (Expression (F circomPrime))) rhs) := by
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.provableWitness (α := field) _) fun k => ?_
+    IsR1CSCirc (@HasAssignEq.assignEq (Var field (F circomPrime)) (F circomPrime) _
+      (instHasAssignEqExpression_1 (M := field)) rhs) := by
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessIR field _) fun k => ?_
   exact IsR1CSCirc.bind (isR1CS_assertEqFieldM (h ⟨k⟩)) fun _ => IsR1CSCirc.pure _
 
 /-- The output of a `Var field` `<==` is the fresh cell, affine. -/
 theorem affine_assignEqFieldM_output (rhs : Var field (F circomPrime)) (n : ℕ) :
-    Affine ((HasAssignEq.assignEq (β := field (Expression (F circomPrime))) rhs).output n) :=
+    Affine ((@HasAssignEq.assignEq (Var field (F circomPrime)) (F circomPrime) _
+      (instHasAssignEqExpression_1 (M := field)) rhs).output n) :=
   Affine.var _
 
 /-! ## `IsZeroField` (Clean's stock zero-test gadget) -/
@@ -726,9 +782,9 @@ theorem affine_assignEqFieldM_output (rhs : Var field (F circomPrime)) (n : ℕ)
 /-- `IsZeroField.main x` witnesses `xInv` and `isZero` and asserts two rows:
 `⟨2, 2⟩`. -/
 theorem costIs_isZeroField (x : Expression (F circomPrime)) :
-    CostIs (Gadgets.IsZeroField.main x) ⟨2, 2⟩ := by
+    CostIs (Gadgets.IsZeroField.circuit.main x) ⟨2, 2⟩ := by
   rw [show (⟨2, 2⟩ : Count) = ⟨1, 0⟩ + (⟨1, 1⟩ + (⟨0, 1⟩ + Count.zero)) from by decide]
-  unfold Gadgets.IsZeroField.main
+  show CostIs (Gadgets.IsZeroField.circuit.main x) _
   refine CostIs.bind (CostIs.witnessField _) fun xInv => ?_
   refine CostIs.bind (costIs_assignEqField _) fun isZero => ?_
   exact CostIs.bind (costIs_assertEqField _ _) fun _ => CostIs.pure _
@@ -736,8 +792,8 @@ theorem costIs_isZeroField (x : Expression (F circomPrime)) :
 /-- Both `IsZeroField` rows are single R1CS rows when `x` is affine:
 `isZero − (1 − x·xInv)` and `isZero·x − 0`. -/
 theorem isR1CS_isZeroField (x : Expression (F circomPrime)) (hx : Affine x) :
-    IsR1CSCirc (Gadgets.IsZeroField.main x) := by
-  unfold Gadgets.IsZeroField.main
+    IsR1CSCirc (Gadgets.IsZeroField.circuit.main x) := by
+  show IsR1CSCirc (Gadgets.IsZeroField.circuit.main x)
   refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessField _) fun nInv => ?_
   refine IsR1CSCirc.bind_out (isR1CS_assignEqField _ fun w =>
     isR1CSRow_sub_one_sub_mul (Affine.var w) hx (Affine.var _)) fun nz => ?_
@@ -756,8 +812,7 @@ theorem isR1CS_sub_isZeroField (x : Expression (F circomPrime)) (hx : Affine x) 
 affine. -/
 theorem affine_sub_isZeroField (x : Expression (F circomPrime)) (n : ℕ) :
     Affine ((subcircuit Gadgets.IsZeroField.circuit x).output n) := by
-  simp only [circuit_norm, subcircuit, Gadgets.IsZeroField.circuit,
-    Gadgets.IsZeroField.elaborated]
+  simp only [circuit_norm, subcircuit, Gadgets.IsZeroField.circuit]
   exact Affine.var _
 
 /-! ## `Mux` (materialized boolean selection) -/
@@ -831,7 +886,7 @@ theorem costIs_isZeroFe (x : Var Emu (F circomPrime)) :
   refine CostIs.bind (costIs_sub_isZeroField _) fun z3 => ?_
   refine CostIs.bind (costIs_assignEqFieldM _) fun t01 => ?_
   refine CostIs.bind (costIs_assignEqFieldM _) fun t23 => ?_
-  exact CostIs.bind (costIs_assignEqFieldM _) fun z => CostIs.pure _
+  exact costIs_assignEqFieldM _
 
 theorem isR1CS_isZeroFe (x : Var Emu (F circomPrime)) (hx : AffineW x) :
     IsR1CSCirc (IsZeroFe.main x) := by
@@ -846,10 +901,9 @@ theorem isR1CS_isZeroFe (x : Var Emu (F circomPrime)) (hx : AffineW x) :
   refine IsR1CSCirc.bind_out (isR1CS_assignEqFieldM _ fun w =>
     isR1CSRow_sub_mul (Affine.var w) (affine_sub_isZeroField _ n2)
       (affine_sub_isZeroField _ n3)) fun n5 => ?_
-  refine IsR1CSCirc.bind_out (isR1CS_assignEqFieldM _ fun w =>
+  exact isR1CS_assignEqFieldM _ fun w =>
     isR1CSRow_sub_mul (Affine.var w) (affine_assignEqFieldM_output _ n4)
-      (affine_assignEqFieldM_output _ n5)) fun n6 => ?_
-  exact IsR1CSCirc.pure _
+      (affine_assignEqFieldM_output _ n5)
 
 theorem costIs_sub_isZeroFe (x : Var Emu (F circomPrime)) :
     CostIs (subcircuit IsZeroFe.circuit x) ⟨11, 11⟩ :=
@@ -887,10 +941,9 @@ theorem degree_pConst (i : ℕ) (hi : i < numLimbs) :
     degree (pConst : Var Emu (F circomPrime))[i] = 0 :=
   degree_emuConst P256 i hi
 
-/-- The output of a single-field `ProvableType.witness` is a fresh cell, affine. -/
-theorem affine_provableWitness_field
-    (c : ProverEnvironment (F circomPrime) → field (F circomPrime)) (n : ℕ) :
-    Affine ((ProvableType.witness (α := field) c).output n) := Affine.var _
+/-- The output of a single-field `Circuit.witnessField` is a fresh cell, affine. -/
+theorem affine_provableWitness_field (e : Witgen.FExpr (F circomPrime)) (n : ℕ) :
+    Affine ((Circuit.witnessField e).output n) := Affine.var _
 
 /-! ## `AddMod` / `SubMod` (emulated field addition / subtraction) -/
 
@@ -903,8 +956,8 @@ theorem costIs_addMod (input : Var AddMod.Inputs (F circomPrime)) :
         = ⟨4, 0⟩ + (⟨1, 0⟩ + (⟨0, 1⟩ + (⟨256, 260⟩ + (⟨264, 269⟩ +
             (⟨490, 498⟩ + Count.zero))))) from by decide]
   unfold AddMod.main
-  refine CostIs.bind (CostIs.provableWitness _) fun r => ?_
-  refine CostIs.bind (CostIs.provableWitness _) fun q => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec numLimbs _) fun r => ?_
+  refine CostIs.bind (CostIs.witnessProgramField _) fun q => ?_
   refine CostIs.bind (CostIs.assertZero _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_normalize secpParams _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_lessThan secpParams _) fun _ => ?_
@@ -916,13 +969,13 @@ theorem isR1CS_addMod (input : Var AddMod.Inputs (F circomPrime))
     IsR1CSCirc (AddMod.main input) := by
   obtain ⟨a, b⟩ := input
   unfold AddMod.main
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nr => ?_
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.provableWitness (α := field) _) fun nq => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec _ _) fun nr => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramField _) fun nq => ?_
   refine IsR1CSCirc.bind (IsR1CSCirc.assertZero
-    (isR1CSRow_mul (affine_provableWitness_field _ nq)
-      (Affine.sub (affine_provableWitness_field _ nq) (Affine.const 1)))) fun _ => ?_
+    (isR1CSRow_mul (affine_witnessProgramField _ nq)
+      (Affine.sub (affine_witnessProgramField _ nq) (Affine.const 1)))) fun _ => ?_
   refine IsR1CSCirc.bind
-    (isR1CS_assertion_normalize secpParams _ (affineW_provableWitness_bigInt _ nr)) fun _ => ?_
+    (isR1CS_assertion_normalize secpParams _ (affineW_witnessProgramVec _ nr)) fun _ => ?_
   refine IsR1CSCirc.bind (isR1CS_assertion_lessThan secpParams _ ?_ ?_) fun _ => ?_
   · intro i hi
     change Affine (varFromOffset (BigInt numLimbs) nr : Var (BigInt numLimbs) (F circomPrime))[i]
@@ -941,8 +994,8 @@ theorem isR1CS_addMod (input : Var AddMod.Inputs (F circomPrime))
     rw [Vector.getElem_mapFinRange]
     split
     · exact Affine.add
-        (Affine.mul_deg0 (affine_provableWitness_field _ nq) (degree_pConst _ (by assumption)))
-        (affineW_provableWitness_bigInt _ nr _ (by assumption))
+        (Affine.mul_deg0 (affine_witnessProgramField _ nq) (degree_pConst _ (by assumption)))
+        (affineW_witnessProgramVec _ nr _ (by assumption))
     · exact Affine.zero
 
 theorem costIs_sub_addMod (b : Var AddMod.Inputs (F circomPrime)) :
@@ -969,8 +1022,8 @@ theorem costIs_subMod (input : Var SubMod.Inputs (F circomPrime)) :
         = ⟨4, 0⟩ + (⟨1, 0⟩ + (⟨0, 1⟩ + (⟨256, 260⟩ + (⟨264, 269⟩ +
             (⟨490, 498⟩ + Count.zero))))) from by decide]
   unfold SubMod.main
-  refine CostIs.bind (CostIs.provableWitness _) fun r => ?_
-  refine CostIs.bind (CostIs.provableWitness _) fun q => ?_
+  refine CostIs.bind (CostIs.witnessProgramVec numLimbs _) fun r => ?_
+  refine CostIs.bind (CostIs.witnessProgramField _) fun q => ?_
   refine CostIs.bind (CostIs.assertZero _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_normalize secpParams _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_lessThan secpParams _) fun _ => ?_
@@ -982,13 +1035,13 @@ theorem isR1CS_subMod (input : Var SubMod.Inputs (F circomPrime))
     IsR1CSCirc (SubMod.main input) := by
   obtain ⟨a, b⟩ := input
   unfold SubMod.main
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nr => ?_
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.provableWitness (α := field) _) fun nq => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramVec _ _) fun nr => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessProgramField _) fun nq => ?_
   refine IsR1CSCirc.bind (IsR1CSCirc.assertZero
-    (isR1CSRow_mul (affine_provableWitness_field _ nq)
-      (Affine.sub (affine_provableWitness_field _ nq) (Affine.const 1)))) fun _ => ?_
+    (isR1CSRow_mul (affine_witnessProgramField _ nq)
+      (Affine.sub (affine_witnessProgramField _ nq) (Affine.const 1)))) fun _ => ?_
   refine IsR1CSCirc.bind
-    (isR1CS_assertion_normalize secpParams _ (affineW_provableWitness_bigInt _ nr)) fun _ => ?_
+    (isR1CS_assertion_normalize secpParams _ (affineW_witnessProgramVec _ nr)) fun _ => ?_
   refine IsR1CSCirc.bind (isR1CS_assertion_lessThan secpParams _ ?_ ?_) fun _ => ?_
   · intro i hi
     change Affine (varFromOffset (BigInt numLimbs) nr : Var (BigInt numLimbs) (F circomPrime))[i]
@@ -1000,7 +1053,7 @@ theorem isR1CS_subMod (input : Var SubMod.Inputs (F circomPrime))
     intro k hk
     rw [Vector.getElem_mapFinRange]
     split
-    · exact Affine.add (affineW_provableWitness_bigInt _ nr _ (by assumption))
+    · exact Affine.add (affineW_witnessProgramVec _ nr _ (by assumption))
         (hb _ (by assumption))
     · exact Affine.zero
   · -- rhs[k] = a[k] + q·p[k] (k < 4) or 0
@@ -1008,7 +1061,7 @@ theorem isR1CS_subMod (input : Var SubMod.Inputs (F circomPrime))
     rw [Vector.getElem_mapFinRange]
     split
     · exact Affine.add (ha _ (by assumption))
-        (Affine.mul_deg0 (affine_provableWitness_field _ nq) (degree_pConst _ (by assumption)))
+        (Affine.mul_deg0 (affine_witnessProgramField _ nq) (degree_pConst _ (by assumption)))
     · exact Affine.zero
 
 theorem costIs_sub_subMod (b : Var SubMod.Inputs (F circomPrime)) :
@@ -1040,7 +1093,7 @@ theorem costIs_divOrZero (input : Var DivOrZero.Inputs (F circomPrime)) :
   refine CostIs.bind (costIs_sub_isZeroFe _) fun z => ?_
   refine CostIs.bind (costIs_sub_mux _) fun denSafe => ?_
   refine CostIs.bind (costIs_sub_mux _) fun numSafe => ?_
-  refine CostIs.bind (CostIs.provableWitness _) fun lam => ?_
+  refine CostIs.bind (CostIs.witnessIRVec numLimbs _) fun lam => ?_
   refine CostIs.bind (costIs_assertion_normalize secpParams _) fun _ => ?_
   refine CostIs.bind (costIs_assertion_lessThan secpParams _) fun _ => ?_
   refine CostIs.bind (costIs_sub_mulMod secpParams _) fun prod => ?_
@@ -1061,7 +1114,7 @@ theorem isR1CS_divOrZero (input : Var DivOrZero.Inputs (F circomPrime))
   · exact affine_sub_isZeroFe _ nz
   · exact (affineW_emuConst 0).affineProvable
   · exact hnum.affineProvable
-  refine IsR1CSCirc.bind_out (isR1CS_provableWitness_bigInt _) fun nl => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessIRVec numLimbs _) fun nl => ?_
   refine IsR1CSCirc.bind (isR1CS_assertion_normalize secpParams _ ?_) fun _ => ?_
   · intro i hi
     change Affine (varFromOffset (BigInt numLimbs) nl : Var (BigInt numLimbs) (F circomPrime))[i]
@@ -1106,7 +1159,7 @@ theorem costIs_toBytes (x : Var Emu (F circomPrime)) :
   rw [show toBytesCost
         = ⟨32, 0⟩ + (⟨32 * 8, 32 * (8 + 1)⟩ + (⟨4 * 0, 4 * 1⟩ + Count.zero)) from by decide]
   unfold ToBytes.main
-  refine CostIs.bind (CostIs.provableWitness _) fun bytes => ?_
+  refine CostIs.bind (CostIs.witnessVector coordBytes _) fun bytes => ?_
   refine CostIs.bind
     (CostIs.forEach fun a n => costIs_assertion_rangeCheck 8 (by decide) a n) fun _ => ?_
   refine CostIs.bind (CostIs.forEach fun a n => CostIs.assertZero _ n) fun _ => ?_
@@ -1115,11 +1168,11 @@ theorem costIs_toBytes (x : Var Emu (F circomPrime)) :
 theorem isR1CS_toBytes (x : Var Emu (F circomPrime)) (hx : AffineW x) :
     IsR1CSCirc (ToBytes.main x) := by
   unfold ToBytes.main
-  refine IsR1CSCirc.bind_out (IsR1CSCirc.provableWitness _) fun nb => ?_
+  refine IsR1CSCirc.bind_out (IsR1CSCirc.witnessVector coordBytes _) fun nb => ?_
   refine IsR1CSCirc.bind ?_ fun _ => ?_
   · refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun i k => ?_
     refine isR1CS_assertion_rangeCheck 8 (by decide) _ ?_ k
-    exact (affineProvable_provableWitness _ nb).affineW i.val i.isLt
+    exact affineW_witnessVector_output coordBytes _ nb i.val i.isLt
   refine IsR1CSCirc.bind ?_ fun _ => IsR1CSCirc.pure _
   refine IsR1CSCirc.forEach_mem (α := Expression (F circomPrime)) fun k j => ?_
   refine IsR1CSCirc.assertZero ?_ j
@@ -1127,7 +1180,7 @@ theorem isR1CS_toBytes (x : Var Emu (F circomPrime)) (hx : AffineW x) :
   refine isR1CSRow_of_affine (Affine.sub ?_ (hx _ (by exact k.isLt)))
   refine affine_finFoldl' _ _ Affine.zero fun acc t hacc => ?_
   exact Affine.add hacc
-    (Affine.mul_deg0 ((affineProvable_provableWitness _ nb).affineW _ (by
+    (Affine.mul_deg0 (affineW_witnessVector_output coordBytes _ nb _ (by
       have hk := k.isLt; have ht := t.isLt
       simp only [numLimbs, bytesPerLimb, coordBytes] at hk ht ⊢
       omega)) (degree_const _))
@@ -1158,15 +1211,27 @@ def AffineFP (v : Var FlaggedPoint (F circomPrime)) : Prop :=
 (`toElements` is the flat append `v.x ++ (v.y ++ #v[v.isInf])`). -/
 theorem AffineFP.of_affineProvable {v : Var FlaggedPoint (F circomPrime)}
     (h : AffineProvable v) : AffineFP v := by
-  have hflat : AffineW
-      (v.x ++ (v.y ++ #v[v.isInf]) :
-        fields (numLimbs + (numLimbs + 1)) (Expression (F circomPrime))) := by
-    intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using h i (by exact hi)
-  refine ⟨AffineW.left_of_append hflat,
-    AffineW.left_of_append (AffineW.right_of_append hflat), ?_⟩
-  have h1 := AffineW.right_of_append (AffineW.right_of_append hflat) 0 (by decide)
-  simpa using h1
+  -- `toElements` on a `ProvableStruct` normalises to the right-nested append
+  -- chain `x ++ (y ++ (#v[isInf] ++ #v[]))`; project each field out of it
+  obtain ⟨x, y, isInf⟩ := v
+  simp only [AffineProvable, circuit_norm, explicit_provable_type] at h
+  refine ⟨fun i hi => ?_, fun i hi => ?_, ?_⟩
+  · show Affine x[i]
+    rw [Vector.getElem_append_left' hi
+      (y ++ (#v[isInf] ++ (#v[] : Vector (Expression (F circomPrime)) 0)))]
+    exact h i (by omega)
+  · show Affine y[i]
+    rw [Vector.getElem_append_left' hi
+        (#v[isInf] ++ (#v[] : Vector (Expression (F circomPrime)) 0)),
+      Vector.getElem_append_right' x (show i < numLimbs + (1 + 0) by omega)]
+    exact h (i + numLimbs) (by omega)
+  · show Affine isInf
+    rw [show isInf = (#v[isInf] : Vector (Expression (F circomPrime)) 1)[0] from rfl,
+      Vector.getElem_append_left' (show 0 < 1 by omega)
+        (#v[] : Vector (Expression (F circomPrime)) 0),
+      Vector.getElem_append_right' y (show 0 < 1 + 0 by omega),
+      Vector.getElem_append_right' x (show 0 + numLimbs < numLimbs + (1 + 0) by omega)]
+    exact h (0 + numLimbs + numLimbs) (by omega)
 
 /-- Appending affine vectors stays affine (inverse of
 `AffineW.left_of_append` / `AffineW.right_of_append`). -/
@@ -1185,7 +1250,7 @@ theorem affineW_singleton {e : Expression (F circomPrime)} (he : Affine e) :
   intro i hi
   have h0 : i = 0 := by omega
   subst h0
-  simpa using he
+  exact he
 
 /-- Assemble `AffineProvable` on a flagged point from its components. -/
 theorem AffineFP.affineProvable {v : Var FlaggedPoint (F circomPrime)}
@@ -1214,7 +1279,7 @@ theorem costIs_completeAdd (input : Var CompleteAdd.Inputs (F circomPrime)) :
             (⟨1306, 1319⟩ + (⟨1015, 1028⟩ + (⟨1015, 1028⟩ + (⟨1015, 1028⟩ + (⟨4, 4⟩ +
             (⟨4, 4⟩ + (⟨1849, 1871⟩ + (⟨1306, 1319⟩ + (⟨1015, 1028⟩ + (⟨1015, 1028⟩ +
             (⟨1015, 1028⟩ + (⟨1306, 1319⟩ + (⟨1015, 1028⟩ + (⟨1, 1⟩ + (⟨9, 9⟩ +
-            (⟨9, 9⟩ + (⟨9, 9⟩ + Count.zero))))))))))))))))))))) from by decide]
+            (⟨9, 9⟩ + ⟨9, 9⟩)))))))))))))))))))) from by decide]
   unfold CompleteAdd.main
   refine CostIs.bind (costIs_sub_subMod _) fun dx => ?_
   refine CostIs.bind (costIs_sub_subMod _) fun dy => ?_
@@ -1237,8 +1302,7 @@ theorem costIs_completeAdd (input : Var CompleteAdd.Inputs (F circomPrime)) :
   refine CostIs.bind (costIs_assignEqFieldM _) fun cancel => ?_
   refine CostIs.bind (costIs_sub_mux _) fun s1 => ?_
   refine CostIs.bind (costIs_sub_mux _) fun s2 => ?_
-  refine CostIs.bind (costIs_sub_mux _) fun out => ?_
-  exact CostIs.pure _
+  exact costIs_sub_mux _
 
 theorem isR1CS_completeAdd (input : Var CompleteAdd.Inputs (F circomPrime))
     (hP : AffineFP input.P) (hQ : AffineFP input.Q) :
@@ -1293,10 +1357,9 @@ theorem isR1CS_completeAdd (input : Var CompleteAdd.Inputs (F circomPrime))
   refine IsR1CSCirc.bind_out (isR1CS_sub_mux _ hQi
     (AffineFP.affineProvable ⟨hPx, hPy, hPi⟩)
     (affineProvable_sub_mux _ ns1)) fun ns2 => ?_
-  refine IsR1CSCirc.bind_out (isR1CS_sub_mux _ hPi
+  exact isR1CS_sub_mux _ hPi
     (AffineFP.affineProvable ⟨hQx, hQy, hQi⟩)
-    (affineProvable_sub_mux _ ns2)) fun nout => ?_
-  exact IsR1CSCirc.pure _
+    (affineProvable_sub_mux _ ns2)
 
 theorem costIs_sub_completeAdd (b : Var CompleteAdd.Inputs (F circomPrime)) :
     CostIs (subcircuit CompleteAdd.circuit b) completeAddCost :=
@@ -1473,13 +1536,8 @@ theorem affineOut_sub_scalarMul (b : Var ScalarMul.Inputs (F circomPrime)) (n : 
     simp only [circuit_norm, subcircuit, ScalarMul.circuit, ScalarMul.elaborated]
   · exact affineW_ofFn_var _
   · exact affineW_ofFn_var _
-  · -- the flag is the fold accumulator's `isInf`: thread affineness through
-    -- the (output-level) `Fin.foldl`
-    refine finFoldl_invariant
-      (fun (s : Var FlaggedPoint (F circomPrime)) => Affine s.isInf) _ _ ?_ ?_
-    · exact affineFP_infConst.2.2
-    · intro acc i h
-      exact Affine.var _
+  · -- the pinned elaborated output exposes the flag as a plain witness variable
+    exact Affine.var _
 
 /-! ## Symbolic top-level input/output atoms -/
 
@@ -1489,12 +1547,12 @@ The fixed-base input is bit-sequence-only (`toElements` is `bits ++ #v[]`). -/
 theorem affineInput_components (input : Var Interface.Input (F circomPrime))
     (hinput : AffineProvable input) :
     AffineW input.bits := by
-  have hflat : AffineW
-      (input.bits ++ (#v[] : Vector (Expression (F circomPrime)) 0) :
-        fields (Interface.scalarBits + 0) (Expression (F circomPrime))) := by
-    intro i hi
-    simpa [AffineProvable, circuit_norm, explicit_provable_type] using hinput i (by exact hi)
-  exact AffineW.left_of_append hflat
+  obtain ⟨bits⟩ := input
+  simp only [AffineProvable, circuit_norm, explicit_provable_type] at hinput
+  intro i hi
+  show Affine bits[i]
+  rw [Vector.getElem_append_left' hi (#v[] : Vector (Expression (F circomPrime)) 0)]
+  exact hinput i (by omega)
 
 open Challenge.Instances.Secp256k1ScalarMulFixedBase in
 /-- Assemble `AffineProvable` on a symbolic top-level output from its
@@ -1505,6 +1563,346 @@ theorem affineProvable_interfaceOutput {v : Var Interface.Output (F circomPrime)
   intro j hj
   simp only [circuit_norm, explicit_provable_type]
   exact AffineW.append hx (AffineW.append hy (affineW_singleton hi)) j hj
+
+/-! ## Witness-IR certificates (`UsesIRCirc`)
+
+The easiest of the three compositional certificates: every non-witness operation is
+discharged by its combinator and every witness site by the IR entry point it was built
+with (`Circuit.witnessVector`, `Circuit.witnessField`, `witness`, `witnessVectorProgram`,
+`witnessIR`). The IR predicates need the same local-irreducible treatment as the R1CS
+ones, or term-mode application of the certificates hangs at `whnf`. -/
+
+open Challenge.WitgenIR
+
+attribute [local irreducible] operationsUseIR flatOperationsUseIR IsIR
+
+/-! ### `===` / `<==` leaves -/
+
+theorem usesIR_assertEqField (x y : Expression (F circomPrime)) :
+    UsesIRCirc (x === y) := by
+  show UsesIRCirc (Expression.assertEquals x y)
+  unfold Expression.assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
+  refine UsesIRCirc.assertion (circuit := Gadgets.Equality.circuit field) fun k => ?_
+  show operationsUseIR ((Gadgets.Equality.main (M := field) (x, y)).operations k)
+  unfold Gadgets.Equality.main
+  exact (UsesIRCirc.forEach (α := Expression (F circomPrime)) fun a j =>
+    UsesIRCirc.assertZero _ j) k
+
+theorem usesIR_assignEqField (rhs : Expression (F circomPrime)) :
+    UsesIRCirc (HasAssignEq.assignEq (F := F circomPrime) rhs) :=
+  UsesIRCirc.bind (UsesIRCirc.witnessFieldValue _) fun _ =>
+    UsesIRCirc.bind (usesIR_assertEqField _ rhs) fun _ => UsesIRCirc.pure _
+
+theorem usesIR_assertEqFieldM (x y : Var field (F circomPrime)) :
+    UsesIRCirc (x === y) := by
+  show UsesIRCirc (assertEquals (M := field) x y)
+  unfold assertEquals
+  letI instPair : ProvableType (ProvablePair field field) := ProvablePair.instance
+  refine UsesIRCirc.assertion (circuit := Gadgets.Equality.circuit field) fun k => ?_
+  show operationsUseIR ((Gadgets.Equality.main (M := field) (x, y)).operations k)
+  unfold Gadgets.Equality.main
+  exact (UsesIRCirc.forEach (α := Expression (F circomPrime)) fun a j =>
+    UsesIRCirc.assertZero _ j) k
+
+theorem usesIR_assignEqFieldM (rhs : Var field (F circomPrime)) :
+    UsesIRCirc (@HasAssignEq.assignEq (Var field (F circomPrime)) (F circomPrime) _
+      (instHasAssignEqExpression_1 (M := field)) rhs) :=
+  UsesIRCirc.bind (UsesIRCirc.witnessIR field _ (Challenge.WitgenIR.isIR_ir _ _)) fun _ =>
+    UsesIRCirc.bind (usesIR_assertEqFieldM _ rhs) fun _ => UsesIRCirc.pure _
+
+/-! ### `toBits` / `rangeCheck` -/
+
+theorem usesIR_toBits (n : ℕ) (x : Expression (F circomPrime)) :
+    UsesIRCirc (Gadgets.ToBits.main n x) := by
+  unfold Gadgets.ToBits.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVector n _) fun w => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a k =>
+    (UsesIRCirc.assertion (circuit := assertBool) (b := a)
+      fun j => UsesIRCirc.assertZero _ j) k) fun _ => ?_
+  exact UsesIRCirc.bind (usesIR_assertEqField _ _) fun _ => UsesIRCirc.pure _
+
+theorem usesIR_toBits_sub (n : ℕ) (hn : (2 : ℕ) ^ n < circomPrime)
+    (x : Expression (F circomPrime)) :
+    UsesIRCirc (Gadgets.ToBits.toBits n hn x) :=
+  UsesIRCirc.subcircuitWithAssertion (fun m => usesIR_toBits n x m)
+
+theorem usesIR_rangeCheck (n : ℕ) (hn : (2 : ℕ) ^ n < circomPrime)
+    (x : Expression (F circomPrime)) :
+    UsesIRCirc ((Gadgets.ToBits.rangeCheck n hn).main x) := by
+  show UsesIRCirc (Gadgets.ToBits.toBits n hn x >>= fun _ => pure ())
+  exact UsesIRCirc.bind (usesIR_toBits_sub n hn x) (fun _ => UsesIRCirc.pure ())
+
+theorem usesIR_assertion_rangeCheck (n : ℕ) (hn : (2 : ℕ) ^ n < circomPrime)
+    (x : Expression (F circomPrime)) :
+    UsesIRCirc (assertion (Gadgets.ToBits.rangeCheck n hn) x) :=
+  UsesIRCirc.assertion (fun m => usesIR_rangeCheck n hn x m)
+
+/-! ### `Normalize` / `Equal` -/
+
+theorem usesIR_normalize (P : BigIntParams circomPrime m)
+    (x : Var (BigInt m) (F circomPrime)) : UsesIRCirc (Normalize.main P x) := by
+  unfold Normalize.main
+  exact UsesIRCirc.forEach fun a n => usesIR_assertion_rangeCheck P.B P.hB a n
+
+theorem usesIR_assertion_normalize (P : BigIntParams circomPrime m)
+    (x : Var (BigInt m) (F circomPrime)) :
+    UsesIRCirc (assertion (Normalize.circuit P) x) :=
+  UsesIRCirc.assertion (fun n => usesIR_normalize P x n)
+
+theorem usesIR_equal (input : Var (Equal.Inputs m) (F circomPrime)) :
+    UsesIRCirc (Equal.main input) := by
+  show UsesIRCirc (Gadgets.Equality.circuit (fields m) (input.lhs, input.rhs))
+  refine UsesIRCirc.assertion (circuit := Gadgets.Equality.circuit (fields m)) fun n => ?_
+  show operationsUseIR ((Gadgets.Equality.main (M := fields m)
+    (input.lhs, input.rhs)).operations n)
+  unfold Gadgets.Equality.main
+  exact (UsesIRCirc.forEach (α := Expression (F circomPrime)) fun a k =>
+    UsesIRCirc.assertZero _ k) n
+
+theorem usesIR_assertion_equal (P : BigIntParams circomPrime m)
+    (input : Var (Equal.Inputs m) (F circomPrime)) :
+    UsesIRCirc (assertion (Equal.circuit P) input) :=
+  UsesIRCirc.assertion (fun n => usesIR_equal input n)
+
+/-! ### `LessThan` / `EqViaCarries` -/
+
+theorem usesIR_lessThan (P : BigIntParams circomPrime m) [NeZero m]
+    (input : Var (LessThan.Inputs m) (F circomPrime)) :
+    UsesIRCirc (LessThan.main P input) := by
+  have hne : ¬ (m = 0) := NeZero.ne m
+  unfold LessThan.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram m _) fun d => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize P _) fun _ => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram m _) fun carry => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a k => UsesIRCirc.assertZero _ k) fun _ => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a k => UsesIRCirc.assertZero _ k) fun _ => ?_
+  rw [dif_neg hne]
+  exact UsesIRCirc.bind (UsesIRCirc.assertZero _) fun _ => UsesIRCirc.pure _
+
+theorem usesIR_assertion_lessThan (P : BigIntParams circomPrime m) [NeZero m]
+    (input : Var (LessThan.Inputs m) (F circomPrime)) :
+    UsesIRCirc (assertion (LessThan.circuit P) input) :=
+  UsesIRCirc.assertion (fun n => usesIR_lessThan P input n)
+
+theorem usesIR_eqViaCarries (P : BigIntParams circomPrime m) [NeZero m]
+    (input : Var (EqViaCarries.Inputs m) (F circomPrime)) :
+    UsesIRCirc (EqViaCarries.main P input) := by
+  have hM : 0 < 2 * m - 1 := by have := Nat.pos_of_neZero m; omega
+  have hne : ¬ (2 * m - 1 = 0) := by omega
+  unfold EqViaCarries.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram (2 * m - 1) _) fun carry => ?_
+  refine UsesIRCirc.bind
+    (UsesIRCirc.forEach fun a k => usesIR_assertion_rangeCheck P.W P.hW a k) fun _ => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a k => UsesIRCirc.assertZero _ k) fun _ => ?_
+  rw [dif_neg hne]
+  exact UsesIRCirc.bind (UsesIRCirc.assertZero _) fun _ => UsesIRCirc.pure _
+
+theorem usesIR_assertion_eqViaCarries (P : BigIntParams circomPrime m) [NeZero m]
+    (input : Var (EqViaCarries.Inputs m) (F circomPrime)) :
+    UsesIRCirc (assertion (EqViaCarries.circuit P) input) :=
+  UsesIRCirc.assertion (fun n => usesIR_eqViaCarries P input n)
+
+/-! ### `MulMod` -/
+
+theorem usesIR_witnessedMul [NeZero m] (a b : Var (BigInt m) (F circomPrime)) :
+    UsesIRCirc (MulMod.witnessedMul a b) := by
+  unfold MulMod.witnessedMul
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVector (m * m) _) fun pp => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a k => UsesIRCirc.assertZero _ k) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_mulMod (P : BigIntParams circomPrime m) [NeZero m]
+    (input : Var (MulMod.Inputs m) (F circomPrime)) :
+    UsesIRCirc (MulMod.main P input) := by
+  unfold MulMod.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram m _) fun q => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram m _) fun r => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize P _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize P _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_witnessedMul _ _) fun Pc => ?_
+  refine UsesIRCirc.bind (usesIR_witnessedMul _ _) fun Sqn => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_eqViaCarries P _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_lessThan P _) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_mulMod (P : BigIntParams circomPrime m) [NeZero m]
+    (b : Var (MulMod.Inputs m) (F circomPrime)) :
+    UsesIRCirc (subcircuit (MulMod.circuit P) b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_mulMod P b n)
+
+/-! ### `IsZeroField` / `IsZeroFe` -/
+
+theorem usesIR_isZeroField (x : Expression (F circomPrime)) :
+    UsesIRCirc (Gadgets.IsZeroField.circuit.main x) := by
+  show UsesIRCirc (Gadgets.IsZeroField.circuit.main x)
+  refine UsesIRCirc.bind (UsesIRCirc.witnessField _) fun xInv => ?_
+  refine UsesIRCirc.bind (usesIR_assignEqField _) fun isZero => ?_
+  exact UsesIRCirc.bind (usesIR_assertEqField _ _) fun _ => UsesIRCirc.pure _
+
+theorem usesIR_sub_isZeroField (x : Expression (F circomPrime)) :
+    UsesIRCirc (subcircuit Gadgets.IsZeroField.circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_isZeroField x n)
+
+theorem usesIR_isZeroFe (x : Var Emu (F circomPrime)) :
+    UsesIRCirc (IsZeroFe.main x) := by
+  unfold IsZeroFe.main
+  refine UsesIRCirc.bind (usesIR_sub_isZeroField _) fun z0 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_isZeroField _) fun z1 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_isZeroField _) fun z2 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_isZeroField _) fun z3 => ?_
+  refine UsesIRCirc.bind (usesIR_assignEqFieldM _) fun t01 => ?_
+  refine UsesIRCirc.bind (usesIR_assignEqFieldM _) fun t23 => ?_
+  exact usesIR_assignEqFieldM _
+
+theorem usesIR_sub_isZeroFe (x : Var Emu (F circomPrime)) :
+    UsesIRCirc (subcircuit IsZeroFe.circuit x) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_isZeroFe x n)
+
+/-! ### `Mux` -/
+
+theorem usesIR_mux {M : TypeMap} [ProvableType M]
+    (input : Var (Mux.Inputs M) (F circomPrime)) :
+    UsesIRCirc (Mux.main input) := by
+  obtain ⟨sel, t, f⟩ := input
+  unfold Mux.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessValue _) fun out => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a n => UsesIRCirc.assertZero _ n) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_mux {M : TypeMap} [ProvableType M]
+    (b : Var (Mux.Inputs M) (F circomPrime)) :
+    UsesIRCirc (subcircuit (Mux.circuit (M := M)) b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_mux b n)
+
+/-! ### `AddMod` / `SubMod` -/
+
+theorem usesIR_addMod (input : Var AddMod.Inputs (F circomPrime)) :
+    UsesIRCirc (AddMod.main input) := by
+  obtain ⟨a, b⟩ := input
+  unfold AddMod.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram numLimbs _) fun r => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.witnessProgram (M := field) _) fun q => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.assertZero _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_lessThan secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_eqViaCarries secpParams _) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_addMod (b : Var AddMod.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit AddMod.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_addMod b n)
+
+theorem usesIR_subMod (input : Var SubMod.Inputs (F circomPrime)) :
+    UsesIRCirc (SubMod.main input) := by
+  obtain ⟨a, b⟩ := input
+  unfold SubMod.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVectorProgram numLimbs _) fun r => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.witnessProgram (M := field) _) fun q => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.assertZero _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_lessThan secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_eqViaCarries secpParams _) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_subMod (b : Var SubMod.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit SubMod.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_subMod b n)
+
+/-! ### `DivOrZero` -/
+
+theorem usesIR_divOrZero (input : Var DivOrZero.Inputs (F circomPrime)) :
+    UsesIRCirc (DivOrZero.main input) := by
+  obtain ⟨num, den⟩ := input
+  unfold DivOrZero.main
+  refine UsesIRCirc.bind (usesIR_sub_isZeroFe _) fun z => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun denSafe => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun numSafe => ?_
+  refine UsesIRCirc.bind
+    (UsesIRCirc.witnessIR (fields numLimbs) _ (DivOrZero.isIR_lamIR num den)) fun lam => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_normalize secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_lessThan secpParams _) fun _ => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mulMod secpParams _) fun prod => ?_
+  refine UsesIRCirc.bind (usesIR_assertion_equal secpParams _) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_divOrZero (b : Var DivOrZero.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit DivOrZero.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_divOrZero b n)
+
+/-! ### `ToBytes` -/
+
+theorem usesIR_toBytes (x : Var Emu (F circomPrime)) :
+    UsesIRCirc (ToBytes.main x) := by
+  unfold ToBytes.main
+  refine UsesIRCirc.bind (UsesIRCirc.witnessVector coordBytes _) fun bytes => ?_
+  refine UsesIRCirc.bind
+    (UsesIRCirc.forEach fun a n => usesIR_assertion_rangeCheck 8 (by decide) a n) fun _ => ?_
+  refine UsesIRCirc.bind (UsesIRCirc.forEach fun a n => UsesIRCirc.assertZero _ n) fun _ => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_toBytes (b : Var Emu (F circomPrime)) :
+    UsesIRCirc (subcircuit ToBytes.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_toBytes b n)
+
+/-! ### `CompleteAdd` / `Step` / `ScalarMul` -/
+
+theorem usesIR_completeAdd (input : Var CompleteAdd.Inputs (F circomPrime)) :
+    UsesIRCirc (CompleteAdd.main input) := by
+  obtain ⟨P, Q⟩ := input
+  unfold CompleteAdd.main
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun dx => ?_
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun dy => ?_
+  refine UsesIRCirc.bind (usesIR_sub_isZeroFe _) fun sameX => ?_
+  refine UsesIRCirc.bind (usesIR_sub_addMod _) fun sy => ?_
+  refine UsesIRCirc.bind (usesIR_sub_isZeroFe _) fun oppY => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mulMod secpParams _) fun x1sq => ?_
+  refine UsesIRCirc.bind (usesIR_sub_addMod _) fun x1sq2 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_addMod _) fun tNum => ?_
+  refine UsesIRCirc.bind (usesIR_sub_addMod _) fun tDen => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun num => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun den => ?_
+  refine UsesIRCirc.bind (usesIR_sub_divOrZero _) fun lam => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mulMod secpParams _) fun lamSq => ?_
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun xs => ?_
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun x3 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun xd => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mulMod secpParams _) fun yprod => ?_
+  refine UsesIRCirc.bind (usesIR_sub_subMod _) fun y3 => ?_
+  refine UsesIRCirc.bind (usesIR_assignEqFieldM _) fun cancel => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun s1 => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun s2 => ?_
+  exact usesIR_sub_mux _
+
+theorem usesIR_sub_completeAdd (b : Var CompleteAdd.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit CompleteAdd.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_completeAdd b n)
+
+theorem usesIR_step (input : Var Step.Inputs (F circomPrime)) :
+    UsesIRCirc (Step.main input) := by
+  obtain ⟨acc, px, py, bit⟩ := input
+  unfold Step.main
+  refine UsesIRCirc.bind (usesIR_sub_completeAdd _) fun doubled => ?_
+  refine UsesIRCirc.bind (usesIR_sub_completeAdd _) fun added => ?_
+  exact usesIR_sub_mux _
+
+theorem usesIR_sub_step (b : Var Step.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit Step.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_step b n)
+
+theorem usesIR_scalarMul (input : Var ScalarMul.Inputs (F circomPrime)) :
+    UsesIRCirc (ScalarMul.main input) := by
+  unfold ScalarMul.main
+  refine UsesIRCirc.bind (UsesIRCirc.foldlRange fun s i n => usesIR_sub_step _ n) fun acc => ?_
+  refine UsesIRCirc.bind (usesIR_sub_toBytes _) fun xb => ?_
+  refine UsesIRCirc.bind (usesIR_sub_toBytes _) fun yb => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun xm => ?_
+  refine UsesIRCirc.bind (usesIR_sub_mux _) fun ym => ?_
+  exact UsesIRCirc.pure _
+
+theorem usesIR_sub_scalarMul (b : Var ScalarMul.Inputs (F circomPrime)) :
+    UsesIRCirc (subcircuit ScalarMul.circuit b) :=
+  UsesIRCirc.subcircuit (fun n => usesIR_scalarMul b n)
 
 end Cost
 end Solution.Secp256k1ScalarMulFixedBase

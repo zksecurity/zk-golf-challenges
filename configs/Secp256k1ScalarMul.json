@@ -6,7 +6,9 @@
         "Solution.Secp256k1ScalarMul.completeness",
         "Solution.Secp256k1ScalarMul.mainCost",
         "Solution.Secp256k1ScalarMul.isR1CS",
-        "Solution.Secp256k1ScalarMul.computableWitness"
+        "Solution.Secp256k1ScalarMul.witgenIsIR",
+        "Solution.Secp256k1ScalarMul.computableWitness",
+        "Solution.Secp256k1ScalarMul.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.Secp256k1ScalarMul.main",

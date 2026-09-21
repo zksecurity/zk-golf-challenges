@@ -39,7 +39,7 @@ theorem soundness :
     PinStateCanon.Assumptions, PinStateCanon.Spec,
     eval_splitWords, eval_initialState, eval_initialBlock]
   obtain ⟨hstate, hblock⟩ := h_holds
-  rw [hstate, hblock]
+  exact ⟨hstate, hblock⟩
 
 theorem completeness :
     Completeness (F p2) main Assumptions := by
@@ -243,12 +243,13 @@ theorem soundness :
   circuit_proof_start [main, Spec, Prepare.circuit, Prepare.Assumptions, Prepare.Spec,
     Steps7.circuit, Steps7.Assumptions, Steps7.Spec,
     Finalize.circuit, Finalize.Assumptions, Finalize.Spec]
-  obtain ⟨hprepare, hsteps, hfinal⟩ := h_holds
-  rw [hprepare] at hsteps
+  -- `Prepare.Spec` arrives as its two component equations (the struct equality is
+  -- split by the circuit normalization), so rewrite with each of them.
+  obtain ⟨⟨hprepare_state, hprepare_block⟩, hsteps, hfinal⟩ := h_holds
+  rw [hprepare_state, hprepare_block] at hsteps
   have hresult := congrArg Config.state hsteps
-  have hinitial := congrArg Config.state hprepare
-  dsimp only at hresult hinitial
-  rw [hresult, hinitial] at hfinal
+  dsimp only at hresult
+  rw [hresult, hprepare_state] at hfinal
   simpa only [Blake3Bits.compress, Blake3Bits.compressState] using hfinal
 
 theorem completeness :

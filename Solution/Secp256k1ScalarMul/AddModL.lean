@@ -121,13 +121,15 @@ deriving ProvableStruct
 
 def main (input : Var Inputs (F circomPrime)) :
     Circuit (F circomPrime) (Var Emu (F circomPrime)) := do
-  let { a, b } := input
+  let a := input.a
+  let b := input.b
 
-  -- witness r ≡ a + b (mod P256) as canonical digits, and the quotient q
-  let r ← ProvableType.witness (α := Emu) fun env =>
-    emuOfNat ((evalEmu env a + evalEmu env b) % P256)
-  let q ← ProvableType.witness (α := field) fun env =>
-    (((evalEmu env a + evalEmu env b) / P256 : ℕ) : F circomPrime)
+  -- witness r ≡ a + b (mod P256) as canonical digits, and the quotient q. Both come
+  -- out of the same digit register as in `AddMod`, but with *two* reduction stages:
+  -- merely normalized operands can sum past `2·P256`, so `q ∈ {0,1,2}`.
+  let r ← witnessVectorProgram numLimbs (IREmu.addLRProg a b)
+  let q ← witnessProgram (F := F circomPrime) (value := field) (var := Expression)
+    (IREmu.addLQProg a b)
 
   -- q ∈ {0,1,2,3}: range-check to 2 bits (no boolean assert — sum may exceed 2·P256)
   Gadgets.ToBits.rangeCheck 2 (by decide) q
@@ -274,9 +276,23 @@ theorem completeness : Completeness (F circomPrime) main Assumptions := by
     rw [evalEmu, BigInt.value, ← h_input.1]
   have hevb : evalEmu env input_var_b = BigInt.value limbBits input_b := by
     rw [evalEmu, BigInt.value, ← h_input.2]
-  rw [heva, hevb] at h_env
+  -- read the witnessed cells back, in the vocabulary `completeness_core` expects
+  have hna : BigInt.Normalized limbBits
+      (input_var_a.map (Expression.eval env.toEnvironment)) := by
+    rw [h_input.1]; exact ha_norm
+  have hnb : BigInt.Normalized limbBits
+      (input_var_b.map (Expression.eval env.toEnvironment)) := by
+    rw [h_input.2]; exact hb_norm
+  have hwit_r : ∀ i : Fin numLimbs, env.toEnvironment.get (i₀ + i.val)
+      = (emuOfNat ((BigInt.value limbBits input_a + BigInt.value limbBits input_b) % P256))[i.val] := by
+    intro i
+    have hget := h_env.1 i
+    rw [IREmu.eval_addLRProg_of _ _ env hna hnb, heva, hevb] at hget
+    exact hget
+  have hwit_q := h_env.2
+  rw [IREmu.eval_addLQProg_of _ _ env hna hnb, heva, hevb] at hwit_q
   exact completeness_core i₀ env.toEnvironment input_var_a input_var_b input_a input_b
-    h_input.1 h_input.2 ha_norm hb_norm h_env.1 h_env.2
+    h_input.1 h_input.2 ha_norm hb_norm hwit_r hwit_q
 
 /-- The `AddModL` formal circuit: `c ≡ a + b (mod P256)`, output normalized. -/
 def circuit : FormalCircuit (F circomPrime) Inputs Emu where

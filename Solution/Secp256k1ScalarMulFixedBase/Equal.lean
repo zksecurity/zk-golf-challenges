@@ -34,18 +34,38 @@ private theorem equalityComputableWitnesses (M : TypeMap) [ProvableType M] :
     (((Gadgets.Equality.circuit (F := F p) M).main input).operations offset)
   apply
     Challenge.Utils.ComputableWitnessLemmas.FormalCircuitBase.Operations.forAllFlat_of_structuralComputableWitnesses
-  unfold Gadgets.Equality.circuit Gadgets.Equality.main
-  simp only [
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.forEach_structuralComputableWitnesses_iff,
-    Challenge.Utils.ComputableWitnessLemmas.Circuit.assertZero_structuralComputableWitnesses_iff]
-  intro _
-  trivial
+  obtain ⟨x, y⟩ := input
+  simp only [Gadgets.Equality.circuit, Gadgets.Equality.main, circuit_norm]
 
 /-- Inputs of `Equal`: the two big integers `lhs` and `rhs` to compare. -/
 structure Inputs (m : ℕ) (F : Type) where
   lhs : BigInt m F
   rhs : BigInt m F
 deriving ProvableStruct
+
+/-- Per-field projection of an `eval`-agreement hypothesis on the `Inputs` struct.
+The `Var Inputs` `match` no longer iota-reduces on a struct *variable*, so the
+destructuring has to happen here, once. -/
+lemma eval_inputs_parts {input : Var (Inputs m) (F p)} {env env' : Environment (F p)}
+    (h : eval env input = eval env' input) :
+    eval env input.lhs = eval env' input.lhs ∧ eval env input.rhs = eval env' input.rhs := by
+  obtain ⟨lhs, rhs⟩ := input
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq] at h ⊢
+  exact h
+
+/-- Build an `eval`-agreement on a literal `Inputs` struct out of per-field
+agreement. The `Var Inputs` components list no longer iota-reduces on its own, so
+the packing happens here, once. -/
+lemma eval_inputs_mk {lhs rhs : Var (BigInt m) (F p)}
+    {env env' : ProverEnvironment (F p)}
+    (hl : Vector.map (Expression.eval env.toEnvironment) lhs
+        = Vector.map (Expression.eval env'.toEnvironment) lhs)
+    (hr : Vector.map (Expression.eval env.toEnvironment) rhs
+        = Vector.map (Expression.eval env'.toEnvironment) rhs) :
+    eval env ({ lhs := lhs, rhs := rhs } : Var (Inputs m) (F p))
+      = eval env' ({ lhs := lhs, rhs := rhs } : Var (Inputs m) (F p)) := by
+  simp only [circuit_norm, explicit_provable_type, Inputs.mk.injEq]
+  exact ⟨hl, hr⟩
 
 /-- The `main` circuit of `Equal`: assert the two big integers are limb-wise
 equal (`lhs === rhs`). -/
@@ -71,11 +91,9 @@ def circuit (P : BigIntParams p m) : FormalAssertion (F p) (Inputs m) where
   Spec := Spec P.B
   soundness := by
     circuit_proof_start
-    simp only [← h_input]
     rw [h_holds]
   completeness := by
     circuit_proof_start
-    simp only [← h_input] at h_assumptions h_spec
     exact BigInt.value_inj h_assumptions.1 h_assumptions.2 h_spec
 
 theorem computableWitnesses (P : BigIntParams p m) : (circuit P).ComputableWitnesses := by
@@ -98,10 +116,8 @@ theorem computableWitnesses (P : BigIntParams p m) : (circuit P).ComputableWitne
       CircuitType.eval_expression_prover_to_verifier (M := Inputs m),
       CircuitType.eval_expression_prover_to_verifier (M := Inputs m)] at h_input
     apply Prod.ext
-    · have h := congrArg (fun x : Inputs m (F p) => x.lhs) h_input
-      simpa [ProvableStruct.eval_eq_eval, ProvableStruct.eval] using h
-    · have h := congrArg (fun x : Inputs m (F p) => x.rhs) h_input
-      simpa [ProvableStruct.eval_eq_eval, ProvableStruct.eval] using h
+    · exact (eval_inputs_parts h_input).1
+    · exact (eval_inputs_parts h_input).2
   · exact equalityComputableWitnesses (p := p) (fields m)
 
 theorem computableWitness (P : BigIntParams p m) : ∀ n (input : Var (Inputs m) (F p)),

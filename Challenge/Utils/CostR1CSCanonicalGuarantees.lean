@@ -18,7 +18,7 @@ proofs.
 
 namespace Challenge.CostR1CS
 
-variable {F : Type} [Field F] {α : Type}
+variable {F : Type} [FiniteField F] {α : Type}
 
 /-! ### 1 · Direct reading: row `t` pins variable `n + t` -/
 

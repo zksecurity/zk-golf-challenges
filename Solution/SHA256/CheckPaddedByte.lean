@@ -65,7 +65,7 @@ theorem soundness (j : Fin paddedBytesLen) :
   have h_eq : Expression.eval env (byteFromWord input_var_word ⟨j.val % 4, by omega⟩) =
       Expression.eval env (expectedPaddedByte input_var_message input_var_lenFlags j) := by
     have := h_holds
-    rw [add_neg_eq_zero] at this
+    rw [sub_eq_zero] at this
     exact this
   rw [eval_byteFromWord, eval_expectedPaddedByte env _ _ j ℓ hℓ_lt h_onehot'] at h_eq
   rw [h_word_eq] at h_eq
@@ -87,7 +87,6 @@ theorem soundness (j : Fin paddedBytesLen) :
     rw [hnat]
     unfold specPaddedByte
     rw [dif_pos ⟨h, hj2⟩, Vector.getElem_map]
-    rfl
   · -- constant branch
     rw [dif_neg h] at h_eq
     have hlt_word : wordByteVal input_word ⟨j.val % 4, by omega⟩ < 256 :=
@@ -108,7 +107,7 @@ theorem completeness (j : Fin paddedBytesLen) :
   have hℓ_lt : ℓ < inputBufferLen := h_len
   have h_onehot' : OneHotAt (Vector.map (Expression.eval env.toEnvironment) input_var_lenFlags) ℓ := by
     rw [h_flags_eq]; exact h_onehot
-  rw [add_neg_eq_zero]
+  rw [sub_eq_zero]
   rw [eval_byteFromWord, eval_expectedPaddedByte env.toEnvironment _ _ j ℓ hℓ_lt h_onehot']
   rw [h_word_eq]
   -- it suffices to show the two casts agree at the nat level
@@ -123,7 +122,6 @@ theorem completeness (j : Fin paddedBytesLen) :
     rw [h_spec]
     unfold specPaddedByte
     rw [dif_pos ⟨h, hj2⟩, Vector.getElem_map]
-    rfl
   · rw [dif_neg h]
     congr 1
     rw [h_spec]

@@ -6,7 +6,9 @@
         "Solution.KangarooTwelveGF2.completeness",
         "Solution.KangarooTwelveGF2.mainCost",
         "Solution.KangarooTwelveGF2.isR1CS_Cidentity",
-        "Solution.KangarooTwelveGF2.computableWitness"
+        "Solution.KangarooTwelveGF2.witgenIsIR",
+        "Solution.KangarooTwelveGF2.computableWitness",
+        "Solution.KangarooTwelveGF2.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.KangarooTwelveGF2.main",

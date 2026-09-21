@@ -28,7 +28,7 @@ def flatOperationsRow (P : Expression F → Prop) : List (FlatOperation F) → P
   | .lookup _ :: _ => False
   | .interact _ :: _ => False
 
-def operationsRow (P : Expression F → Prop) [Field F] : Operations F → Prop
+def operationsRow (P : Expression F → Prop) [FiniteField F] : Operations F → Prop
   | [] => True
   | .witness _ _ :: ops => operationsRow P ops
   | .assert e :: ops => P e ∧ operationsRow P ops
@@ -49,7 +49,7 @@ theorem flatOperationsRow_mono {P Q : Expression F → Prop} (hPQ : ∀ e, P e �
     | lookup => exact h.elim
     | interact => exact h.elim
 
-theorem operationsRow_mono [Field F] {P Q : Expression F → Prop} (hPQ : ∀ e, P e → Q e)
+theorem operationsRow_mono [FiniteField F] {P Q : Expression F → Prop} (hPQ : ∀ e, P e → Q e)
     {ops : Operations F} (h : operationsRow P ops) : operationsRow Q ops := by
   induction ops with
   | nil => trivial
@@ -69,13 +69,13 @@ theorem flatOperationsRow_append (P : Expression F → Prop) (ops₁ ops₂ : Li
   | nil => simp [flatOperationsRow]
   | cons op ops ih => cases op <;> simp [flatOperationsRow, ih, and_assoc]
 
-theorem operationsRow_append [Field F] (P : Expression F → Prop) (ops₁ ops₂ : Operations F) :
+theorem operationsRow_append [FiniteField F] (P : Expression F → Prop) (ops₁ ops₂ : Operations F) :
     operationsRow P (ops₁ ++ ops₂) ↔ operationsRow P ops₁ ∧ operationsRow P ops₂ := by
   induction ops₁ with
   | nil => simp [operationsRow]
   | cons op ops ih => cases op <;> simp [operationsRow, ih, and_assoc]
 
-theorem operationsRow_iff_toFlat [Field F] (P : Expression F → Prop) (ops : Operations F) :
+theorem operationsRow_iff_toFlat [FiniteField F] (P : Expression F → Prop) (ops : Operations F) :
     operationsRow P ops ↔ flatOperationsRow P ops.toFlat := by
   induction ops with
   | nil => simp [operationsRow, flatOperationsRow, Operations.toFlat]
@@ -83,7 +83,7 @@ theorem operationsRow_iff_toFlat [Field F] (P : Expression F → Prop) (ops : Op
     cases op <;> simp [operationsRow, flatOperationsRow, Operations.toFlat,
       flatOperationsRow_append, ih]
 
-theorem operationsRow_flatten_ofFn {m : ℕ} [Field F] (P : Expression F → Prop)
+theorem operationsRow_flatten_ofFn {m : ℕ} [FiniteField F] (P : Expression F → Prop)
     (g : Fin m → Operations F) (h : ∀ i, operationsRow P (g i)) :
     operationsRow P (List.ofFn g).flatten := by
   induction m with
@@ -94,11 +94,11 @@ theorem operationsRow_flatten_ofFn {m : ℕ} [Field F] (P : Expression F → Pro
 
 /-! ### Circuit-level certificate + combinators -/
 
-def IsRowCirc (P : Expression F → Prop) [Field F] (c : Circuit F α) : Prop :=
+def IsRowCirc (P : Expression F → Prop) [FiniteField F] (c : Circuit F α) : Prop :=
   ∀ n, operationsRow P (c.operations n)
 
 section
-variable [Field F] {P : Expression F → Prop}
+variable [FiniteField F] {P : Expression F → Prop}
 
 theorem IsRowCirc.mono {Q : Expression F → Prop} (hPQ : ∀ e, P e → Q e)
     {c : Circuit F α} (h : IsRowCirc P c) : IsRowCirc Q c :=
@@ -113,8 +113,18 @@ theorem IsRowCirc.bind {f : Circuit F α} {g : α → Circuit F β}
   rw [Circuit.bind_operations_eq, operationsRow_append]
   exact ⟨hf n, hg _ _⟩
 
-theorem IsRowCirc.witnessVector (m : ℕ) (c : ProverEnvironment F → Vector F m) :
-    IsRowCirc P (Circuit.witnessVector m c) := by intro n; trivial
+theorem IsRowCirc.witnessVector (m : ℕ) (out : Witgen.VExpr F m) :
+    IsRowCirc P (Circuit.witnessVector m out) := by intro n; trivial
+
+theorem IsRowCirc.witnessVectorNative (m : ℕ) (c : ProverEnvironment F → Vector F m) :
+    IsRowCirc P (witnessVectorNative m c) := by intro n; trivial
+
+theorem IsRowCirc.witnessIR (M : TypeMap) [ProvableType M] (ir : WitgenIR F (size M)) :
+    IsRowCirc P (witnessIR M ir) := by intro n; trivial
+
+theorem IsRowCirc.witnessNative {M : TypeMap} [ProvableType M]
+    (c : ProverEnvironment F → M F) :
+    IsRowCirc P (witnessNative (var := Var M) c) := by intro n; trivial
 
 theorem IsRowCirc.assertZero {e : Expression F} (h : P e) :
     IsRowCirc P (Circuit.assertZero e) := by
@@ -160,7 +170,7 @@ theorem flatOperationsRow_isR1CSRow_iff (ops : List (FlatOperation F)) :
   | nil => simp [flatOperationsRow, flatOperationsIsR1CS]
   | cons op ops ih => cases op <;> simp [flatOperationsRow, flatOperationsIsR1CS, ih]
 
-theorem operationsRow_isR1CSRow_iff [Field F] (ops : Operations F) :
+theorem operationsRow_isR1CSRow_iff [FiniteField F] (ops : Operations F) :
     operationsRow isR1CSRow ops ↔ operationsIsR1CS ops := by
   induction ops with
   | nil => simp [operationsRow, operationsIsR1CS]
@@ -168,7 +178,7 @@ theorem operationsRow_isR1CSRow_iff [Field F] (ops : Operations F) :
     cases op <;>
       simp [operationsRow, operationsIsR1CS, ih, flatOperationsRow_isR1CSRow_iff]
 
-theorem isRowCirc_isR1CSRow_iff [Field F] (c : Circuit F α) :
+theorem isRowCirc_isR1CSRow_iff [FiniteField F] (c : Circuit F α) :
     IsRowCirc isR1CSRow c ↔ IsR1CSCirc c := by
   simp only [IsRowCirc, IsR1CSCirc, operationsRow_isR1CSRow_iff]
 

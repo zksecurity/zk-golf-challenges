@@ -97,7 +97,7 @@ lemma messageSchedule_eq_valSchedule (input_block : Vector ℕ 16) :
 @[simp] lemma scheduleStep_output (b : ScheduleStep.Inputs (Expression (F p))) (n : ℕ) :
     ScheduleStep.circuit.output b n = varFromOffset (fields 32) (n + 194) := rfl
 
-omit [Fact (Nat.Prime p)] [Fact (p > 2 ^ 33)] in
+omit [Fact (p > 2 ^ 33)] in
 /-- The 48-step `Fin.foldl` of the (circuit_norm–reduced) variable-level schedule body
     equals `varSchedule 48`. Used by the elaborated instance. -/
 lemma finFoldl_eq_varSchedule_48 (i₀ : ℕ) (input_var_block : SHA256Block (Expression (F p))) :

@@ -48,7 +48,7 @@ theorem soundness : Soundness (F p) main Assumptions Spec := by
     exact ⟨h_assumptions ⟨(x.val + 4) % 5, by omega⟩, hrot_norm⟩
   obtain ⟨h_val, h_norm⟩ := h_holds x harg
   refine ⟨h_norm, ?_⟩
-  rw [Vector.getElem_ofFn, h_val, hb _ (by omega), hrot_val]
+  rw [h_val, hb _ (by omega), hrot_val]
 
 theorem completeness : Completeness (F p) main Assumptions := by
   circuit_proof_start [XorLane.circuit, XorLane.Assumptions, XorLane.Spec]

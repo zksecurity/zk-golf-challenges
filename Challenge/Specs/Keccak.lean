@@ -97,6 +97,20 @@ def keccakF (l : Fin 7) (A : Vector ℕ 25) : Vector ℕ 25 :=
   Fin.foldl (12 + 2 * l.val)
     (fun A i => keccakRound w (roundConstants[i.val] % 2 ^ w) A) A
 
+/--
+  The Keccak-p[25 · 2^ℓ, nᵣ] permutation (FIPS 202, Section 3.3): the last nᵣ of
+  the 12 + 2ℓ rounds of Keccak-f[25 · 2^ℓ], i.e. rounds 12 + 2ℓ − nᵣ, ..., 12 + 2ℓ − 1
+  with their round constants, so that Keccak-p[b, 12 + 2ℓ] is Keccak-f[b] itself.
+-/
+def keccakP (l : Fin 7) (nr : ℕ) (h : nr ≤ 12 + 2 * l.val) (A : Vector ℕ 25) : Vector ℕ 25 :=
+  let w := 2 ^ l.val
+  Fin.foldl nr
+    (fun A i =>
+      keccakRound w
+        (roundConstants[12 + 2 * l.val - nr + i.val]'(by have := l.isLt; have := i.isLt; omega)
+          % 2 ^ w) A)
+    A
+
 /-- Pack a 1600-bit string into 25 lanes: state bit 64·i + z is bit z of lane i. -/
 def bitsToState (s : Vector ℕ 1600) : Vector ℕ 25 :=
   Vector.ofFn fun i =>

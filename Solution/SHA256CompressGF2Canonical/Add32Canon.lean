@@ -31,13 +31,56 @@ open Challenge.CostR1CS
 open Solution.SHA256CompressGF2.Add32 (at32 at31 carryVal carryE Inputs
   adder_correct toNat_eq_sum bitAt_eq)
 
+/-! ## Witness programs
+
+The carries are `Add32.carriesIR` unchanged (same values, same closed form); the
+products reuse the same closed-form carry `Add32.carryIR` at the running index, so this
+gadget adds no new recursion to the IR. -/
+
+/-- The witnessed product `dᵢ = (xᵢ+cᵢ)·(yᵢ+cᵢ)` at position `k`, over the closed-form
+carry into `k`. -/
+def prodE (x y : Var (fields 32) (F p2)) (k : Witgen.U64Expr (F p2)) : Witgen.FExpr (F p2) :=
+  (x[k] + Add32.carryIR x y k) * (y[k] + Add32.carryIR x y k)
+
+theorem eval_prodE (x y : Var (fields 32) (F p2)) (ctx : Witgen.Ctx (F p2))
+    (k : Witgen.U64Expr (F p2)) (hk : (Witgen.U64Expr.eval ctx k).toNat < 32) :
+    (prodE x y k).eval ctx
+      = (Expression.eval ctx.env.toEnvironment (at32 x ((Witgen.U64Expr.eval ctx k).toNat))
+            + carryVal (fun j => Expression.eval ctx.env.toEnvironment (at32 x j))
+                (fun j => Expression.eval ctx.env.toEnvironment (at32 y j))
+                ((Witgen.U64Expr.eval ctx k).toNat))
+        * (Expression.eval ctx.env.toEnvironment (at32 y ((Witgen.U64Expr.eval ctx k).toNat))
+            + carryVal (fun j => Expression.eval ctx.env.toEnvironment (at32 x j))
+                (fun j => Expression.eval ctx.env.toEnvironment (at32 y j))
+                ((Witgen.U64Expr.eval ctx k).toNat)) := by
+  simp only [prodE, circuit_norm, Add32.eval_carryIR x y ctx k (Nat.le_of_lt hk),
+    dif_pos hk, at32, Nat.mod_eq_of_lt hk]
+
+/-- Witness program for the 31 products `d₀..d₃₀`: one `mapRange` loop over `prodE`. -/
+def prodsIR (x y : Var (fields 32) (F p2)) : Witgen.VExpr (F p2) 31 :=
+  .range 31 fun i => prodE x y i
+
+/-- `prodsIR` computes exactly the values the proofs are stated over. -/
+theorem getElem_eval_prodsIR (x y : Var (fields 32) (F p2))
+    (env : ProverEnvironment (F p2)) (i : ℕ) (hi : i < 31) :
+    ((prodsIR x y).eval { env })[i]
+      = (Expression.eval env.toEnvironment (at32 x i)
+            + carryVal (fun j => Expression.eval env.toEnvironment (at32 x j))
+                (fun j => Expression.eval env.toEnvironment (at32 y j)) i)
+        * (Expression.eval env.toEnvironment (at32 y i)
+            + carryVal (fun j => Expression.eval env.toEnvironment (at32 x j))
+                (fun j => Expression.eval env.toEnvironment (at32 y j)) i) := by
+  have hidx : (Witgen.U64Expr.eval (F := F p2)
+      { env := env, locals := #[], idx := i } Witgen.U64Expr.idx).toNat = i := by
+    simp only [circuit_norm, UInt64.toNat_ofNat']
+  rw [prodsIR, Witgen.VExpr.range_def,
+    Witgen.VExpr.getElem_eval_mapRange _ _ _ i hi,
+    eval_prodE x y _ _ (by rw [hidx]; omega), hidx]
+
 def main (input : Var Inputs (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
   let x := input.x; let y := input.y
-  let prods ← witnessVector 31 (fun env => Vector.ofFn fun i : Fin 31 =>
-    let c := carryVal (fun j => (at32 x j).eval env) (fun j => (at32 y j).eval env) i.val
-    ((at32 x i.val).eval env + c) * ((at32 y i.val).eval env + c))
-  let carries ← witnessVector 31 (fun env => Vector.ofFn fun i : Fin 31 =>
-    carryVal (fun j => (at32 x j).eval env) (fun j => (at32 y j).eval env) (i.val + 1))
+  let prods ← Circuit.witnessVector 31 (prodsIR x y)
+  let carries ← Circuit.witnessVector 31 (Add32.carriesIR x y)
   Circuit.forEach (Vector.finRange 31) (fun i =>
     assertZero (at31 prods i.val
       - (at32 x i.val + carryE carries i.val) * (at32 y i.val + carryE carries i.val)))
@@ -149,7 +192,8 @@ theorem completeness : Completeness (F p2) main Add32.Assumptions := by
                  (k + 1) := by
     intro k hk
     have h := he_c ⟨k, hk⟩
-    simp only [Vector.getElem_ofFn] at h
+    -- read the witnessed cell through the bridge lemma for the IR generator
+    rw [Add32.getElem_eval_carriesIR _ _ _ _ hk] at h
     exact h
   have henvp : ∀ k : ℕ, (hk : k < 31) → env.get (i₀ + k)
       = (Expression.eval env.toEnvironment (input_var_x[k % 32]'(Nat.mod_lt _ (by norm_num)))
@@ -160,7 +204,8 @@ theorem completeness : Completeness (F p2) main Add32.Assumptions := by
                      (fun j => Expression.eval env.toEnvironment (input_var_y[j % 32]'(Nat.mod_lt _ (by norm_num)))) k) := by
     intro k hk
     have h := he_p ⟨k, hk⟩
-    simp only [Vector.getElem_ofFn] at h
+    -- read the witnessed cell through the bridge lemma for the IR generator
+    rw [getElem_eval_prodsIR _ _ _ _ hk] at h
     exact h
   refine ⟨?_, ?_⟩
   · -- product constraints: dᵢ = (xᵢ+cᵢ)(yᵢ+cᵢ)
@@ -238,12 +283,16 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
     Circuit.pure_structuralComputableWitnesses_iff,
     and_true]
   and_intros
-  · -- the product witnesses read the operands only, via `at32`
+  · -- the product witnesses read the operands only, via `at32` (bridge lemma)
     intro _ h_input
+    refine Vector.ext fun i hi => ?_
+    rw [getElem_eval_prodsIR _ _ _ _ hi, getElem_eval_prodsIR _ _ _ _ hi]
     simp only [eval_at32_pt_congr (Add32.eval_x_congr h_input),
       eval_at32_pt_congr (Add32.eval_y_congr h_input)]
   · -- likewise the carry witnesses
     intro _ h_input
+    refine Vector.ext fun i hi => ?_
+    rw [Add32.getElem_eval_carriesIR _ _ _ _ hi, Add32.getElem_eval_carriesIR _ _ _ _ hi]
     simp only [eval_at32_pt_congr (Add32.eval_x_congr h_input),
       eval_at32_pt_congr (Add32.eval_y_congr h_input)]
   · intro _

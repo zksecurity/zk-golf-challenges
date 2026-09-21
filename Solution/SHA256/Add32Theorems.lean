@@ -67,13 +67,13 @@ lemma z_var_eval (env : Environment (F p)) (i₀ : ℕ) :
 
 omit h_large in
 /-- IsBool from boolean constraint x * (x + -1) = 0 -/
-lemma isbool_of_bool_constraint {x : F p} (h : x * (x + -1) = 0) : IsBool x := by
-  rwa [show x + -1 = x - 1 by ring, ← IsBool.iff_mul_sub_one] at h
+lemma isbool_of_bool_constraint {x : F p} (h : x * (x - 1) = 0) : IsBool x := by
+  rwa [← IsBool.iff_mul_sub_one] at h
 
 omit h_large in
 /-- Normalized z from boolean constraints -/
 lemma normalized_of_bool_holds (env : Environment (F p)) (i₀ : ℕ)
-    (h : ∀ i : Fin 32, env.get (i₀ + i.val) * (env.get (i₀ + i.val) + -1) = 0) :
+    (h : ∀ i : Fin 32, env.get (i₀ + i.val) * (env.get (i₀ + i.val) - 1) = 0) :
     Normalized (Vector.ofFn fun i : Fin 32 => env.get (i₀ + i.val)) := by
   intro i
   have hi := h i

@@ -35,7 +35,7 @@ theorem numBlocksForLen_le {len : ℕ} (h : len ≤ inputBufferLen) :
 
 /-- `getElem` of a chunk of `Vector.toChunks`: entry `i` of chunk `b` is entry
 `b * m + i` of the flat vector. -/
-private theorem getElem_toChunks {α : Type} {n : ℕ} (m : ℕ+) (v : Vector α (n * m))
+private theorem getElem_toChunks {α : Type} {n : ℕ} (m : ℕ) (hm : 0 < m) (v : Vector α (n * m))
     (b i : ℕ) (hb : b < n) (hi : i < m) :
     ((v.toChunks m)[b]'hb)[i]'hi = v[b * m + i]'(by
       have : b * m + i < n * m := by
@@ -49,7 +49,7 @@ private theorem getElem_toChunks {α : Type} {n : ℕ} (m : ℕ+) (v : Vector α
       _ = (b + 1) * m := by ring
       _ ≤ n * m := by apply Nat.mul_le_mul_right; omega
   have hdiv : (b * m + i) / m = b := by
-    rw [Nat.add_comm, Nat.add_mul_div_right _ _ m.pos, Nat.div_eq_of_lt hi]; omega
+    rw [Nat.add_comm, Nat.add_mul_div_right _ _ hm, Nat.div_eq_of_lt hi]; omega
   have hmod : (b * m + i) % m = i := by
     rw [Nat.add_comm, Nat.add_mul_mod_self_right]; exact Nat.mod_eq_of_lt hi
   have hflat : (v.toChunks m).flatten[b * m + i]'hidx =
@@ -63,8 +63,8 @@ private theorem getElem_toChunks {α : Type} {n : ℕ} (m : ℕ+) (v : Vector α
 as `b * 64 + i` (no `ℕ+` coercion noise). -/
 private theorem getElem_toChunks64 {α : Type} {n : ℕ} (v : Vector α (n * 64))
     (b i : ℕ) (hb : b < n) (hi : i < 64) (hbi : b * 64 + i < n * 64) :
-    ((v.toChunks ⟨64, by decide⟩)[b]'hb)[i]'hi = v[b * 64 + i]'hbi :=
-  getElem_toChunks ⟨64, by decide⟩ v b i hb hi
+    ((v.toChunks 64)[b]'hb)[i]'hi = v[b * 64 + i]'hbi :=
+  getElem_toChunks 64 (by norm_num) v b i hb hi
 
 /-- The `b`-th 16-word block of the spec-padded byte stream. -/
 def specBlock (msg : Vector ℕ inputBufferLen) (len b : ℕ) : Vector ℕ 16 :=
@@ -107,22 +107,26 @@ private theorem pad_getElem_eq_specBlock (msg : Vector ℕ inputBufferLen) (len 
       show b < numBlocksForLen len; exact hb) = specBlock msg len b := by
   unfold Specs.SHA256.pad specBlock
   rw [Vector.getElem_map]
+  -- `numBlocksForLen` unfolded, so the index proofs are syntactically well-typed
+  -- against the unfolded length (Lean 4.33 checks this at `implicit` transparency)
+  have hb' : b < (len + (55 + 64 - len % 64) % 64 + 9) / 64 := hb
   -- equality of the underlying 64-byte vectors implies equality of the blocks
   have hbytes :
-      (Vector.toChunks ⟨64, Specs.SHA256.pad._proof_1⟩
+      (Vector.toChunks 64
           (Vector.mapFinRange ((len + (55 + 64 - len % 64) % 64 + 9) / 64 * 64) fun i =>
             if h_1 : i.val < len then (Specs.SHA256.truncate msg len h)[i.val]'h_1
             else if i.val = len then (0x80 : ℕ)
             else if i.val < (len + (55 + 64 - len % 64) % 64 + 9) / 64 * 64 - 8 then 0
-            else len * 8 / 2 ^ (8 * ((len + (55 + 64 - len % 64) % 64 + 9) / 64 * 64 - 1 - i.val)) % 256))[b]'hb
+            else len * 8 / 2 ^ (8 * ((len + (55 + 64 - len % 64) % 64 + 9) / 64 * 64 - 1 - i.val)) % 256))[b]'hb'
         = Vector.ofFn fun (i : Fin 64) => specPaddedByte msg len (b * 64 + i.val) := by
     apply Vector.ext
     intro i hi
     have hi64 : i < 64 := hi
     have hbound : b * 64 + i < numBlocksForLen len * 64 := by
       have := numBlocksForLen_pos len; nlinarith [hb, hi64]
+    have hbound' : b * 64 + i < (len + (55 + 64 - len % 64) % 64 + 9) / 64 * 64 := hbound
     rw [getElem_toChunks64 (n := (len + (55 + 64 - len % 64) % 64 + 9) / 64)
-          _ b i hb hi64 (by exact hbound)]
+          _ b i hb' hi64 hbound']
     rw [Vector.getElem_mapFinRange]
     -- (raw pad byte at b*64+i) = specPaddedByte msg len (b*64+i) = RHS ofFn entry
     have hpe := pad_byte_eq msg len h (b * 64 + i) hbound

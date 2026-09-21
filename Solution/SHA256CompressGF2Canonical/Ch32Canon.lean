@@ -18,10 +18,13 @@ namespace Ch32Canon
 open Solution.SHA256CompressGF2 (a96 a96_affine ch_words)
 
 /-- Witness the AND `pᵢ = eᵢ·(fᵢ⊕gᵢ)`, pin with `pᵢ − eᵢ·(fᵢ⊕gᵢ) = 0` (C = pᵢ),
-and output the inlined `gᵢ ⊕ pᵢ = Ch`. -/
+and output the inlined `gᵢ ⊕ pᵢ = Ch`.
+
+The witness program is a literal vector of that same circuit expression, embedded into
+the witness IR through `FExpr.expr`, so cell `i` reads back as its evaluation. -/
 def main (v : Var (fields 96) (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
-  let p ← witnessVector 32 (fun env => Vector.ofFn fun i : Fin 32 =>
-    (a96 v i.val * (a96 v (32 + i.val) + a96 v (64 + i.val))).eval env)
+  let p ← Circuit.witnessVector 32 (.lit <| .ofFn fun i : Fin 32 => Witgen.FExpr.expr
+    (a96 v i.val * (a96 v (32 + i.val) + a96 v (64 + i.val))))
   Circuit.forEach (Vector.finRange 32) (fun i =>
     assertZero (p[i.val]'i.isLt
       - a96 v i.val * (a96 v (32 + i.val) + a96 v (64 + i.val))))
@@ -60,7 +63,6 @@ theorem completeness : Completeness (F p2) main Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 96) (fields 32) :=
@@ -87,7 +89,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, a96, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal AND expression, so it reads only the input
+    simp only [a96, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 

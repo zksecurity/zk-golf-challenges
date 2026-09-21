@@ -28,10 +28,15 @@ def Assumptions (_ : fields 32 (F p2)) : Prop := True
 def Spec (input output : fields 32 (F p2)) : Prop :=
   output = input
 
-/-- Materialize 32 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`. -/
+/-- Materialize 32 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`.
+
+The witness program is a literal vector of the circuit expressions `b32 v i`, embedded
+into the witness IR through `FExpr.expr` (the generator copies the value of an
+already-built circuit expression, so no `let`-steps are needed); cell `i` therefore
+reads back as the evaluation of `b32 v i`. -/
 def main (v : Var (fields 32) (F p2)) : Circuit (F p2) (Var (fields 32) (F p2)) := do
-  let w ← witnessVector 32 (fun env => Vector.ofFn fun i : Fin 32 =>
-    (b32 v i.val).eval env)
+  let w ← Circuit.witnessVector 32
+    (.lit <| .ofFn fun i : Fin 32 => Witgen.FExpr.expr (b32 v i.val))
   Circuit.forEach (Vector.finRange 32) (fun i =>
     assertZero (w[i.val]'i.isLt - b32 v i.val * 1))
   return w
@@ -58,7 +63,6 @@ theorem completeness : Completeness (F p2) main Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]; ring
 
 def circuit : FormalCircuit (F p2) (fields 32) (fields 32) :=
@@ -86,7 +90,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, b32, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `b32` expression, so it reads only the input
+    simp only [b32, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 
@@ -117,10 +122,15 @@ def Assumptions (_ : fields 512 (F p2)) : Prop := True
 def Spec (input output : fields 512 (F p2)) : Prop :=
   output = input
 
+/-- Materialize 512 expression bits as fresh witnesses, `wᵢ − (vᵢ)·1 = 0`.
+
+The witness program is a literal vector of the circuit expressions `b512 v i`, embedded
+into the witness IR through `FExpr.expr`; cell `i` reads back as the evaluation of
+`b512 v i`. -/
 def main (v : Var (fields 512) (F p2)) :
     Circuit (F p2) (Var (fields 512) (F p2)) := do
-  let w ← witnessVector 512 (fun env => Vector.ofFn fun i : Fin 512 =>
-    (b512 v i.val).eval env)
+  let w ← Circuit.witnessVector 512
+    (.lit <| .ofFn fun i : Fin 512 => Witgen.FExpr.expr (b512 v i.val))
   Circuit.forEach (Vector.finRange 512) (fun i =>
     assertZero (w[i.val]'i.isLt - b512 v i.val * 1))
   return w
@@ -148,7 +158,6 @@ theorem completeness : Completeness (F p2) main Assumptions := by
   circuit_proof_start
   intro i
   have henv := h_env i
-  simp only [circuit_norm, Vector.getElem_ofFn] at henv ⊢
   rw [henv]
   ring
 
@@ -177,7 +186,8 @@ theorem computableWitnesses : circuit.ComputableWitnesses := by
   and_intros
   · intro _ h_input
     refine Vector.ext fun i hi => ?_
-    simp only [Vector.getElem_ofFn, b512, circuit_norm, eval_getElem_congr h_input]
+    -- the witnessed cell is the literal `b512` expression, so it reads only the input
+    simp only [b512, circuit_norm, eval_getElem_congr h_input]
   · intro _
     trivial
 

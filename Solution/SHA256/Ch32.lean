@@ -22,11 +22,14 @@ namespace Ch32
 
 /-- Choice function: Ch(e, f, g) = (e AND f) XOR (NOT e AND g) = g + e·(f − g).
     Per bit: ch = g + e·(f − g), which equals f when e = 1 and g when e = 0.
-    One R1CS constraint per bit: e·(f − g) = ch − g. -/
+    One R1CS constraint per bit: e·(f − g) = ch − g.
+
+    The witness program is the literal per-bit field expression `g + e·(f − g)`;
+    `completeness` and `computableWitnesses` read the witnessed cells back in exactly
+    that form. -/
 def ch32 (e f g : Var (fields 32) (F p)) : Circuit (F p) (Var (fields 32) (F p)) := do
-  let z ← witnessVector 32 fun env =>
-    Vector.ofFn fun (i : Fin 32) =>
-      env g[i] + env e[i] * (env f[i] - env g[i])
+  let z ← Circuit.witnessVector 32 (.lit <| .ofFn fun i : Fin 32 =>
+    (↑g[i.val] + ↑e[i.val] * (↑f[i.val] - ↑g[i.val]) : Witgen.FExpr (F p)))
   Circuit.forEach (Vector.finRange 32) fun i =>
     assertZero (z[i] - g[i] - e[i] * (f[i] - g[i]))
   return z
@@ -92,9 +95,10 @@ theorem completeness : Completeness (F p) main Assumptions := by
     intro i; have := Vector.ext_iff.mp h_input_f i i.isLt; simp [Vector.getElem_map] at this; exact this
   have h_gi : ∀ i : Fin 32, Expression.eval env.toEnvironment input_var_g[i.val] = input_g[i] := by
     intro i; have := Vector.ext_iff.mp h_input_g i i.isLt; simp [Vector.getElem_map] at this; exact this
+  -- the witness program is a literal vector, so `circuit_proof_start` already reads the
+  -- witnessed cells back as `env g[i] + env e[i] * (env f[i] - env g[i])`
   intro i
   have henv := h_env i
-  simp only [Vector.getElem_ofFn] at henv
   rw [h_ei i, h_fi i, h_gi i] at henv
   rw [henv, h_gi i, h_ei i, h_fi i]; ring
 
@@ -118,21 +122,23 @@ theorem computableWitnesses : (circuit (p := p)).ComputableWitnesses := by
     and_true]
   and_intros
   · intro _ h_input
+    obtain ⟨ie, if', ig⟩ := input
     simp [circuit_norm] at h_input
     apply Vector.ext
     intro i hi
-    simp only [Vector.getElem_ofFn]
+    -- the witnessed cell is the literal `Ch` expression, so it reads only the inputs
+    simp only [circuit_norm]
     have he :
-        Expression.eval env.toEnvironment input.e[i] =
-          Expression.eval env'.toEnvironment input.e[i] :=
+        Expression.eval env.toEnvironment ie[i] =
+          Expression.eval env'.toEnvironment ie[i] :=
       h_input.1 _ (by simp)
     have hf :
-        Expression.eval env.toEnvironment input.f[i] =
-          Expression.eval env'.toEnvironment input.f[i] :=
+        Expression.eval env.toEnvironment if'[i] =
+          Expression.eval env'.toEnvironment if'[i] :=
       h_input.2.1 _ (by simp)
     have hg :
-        Expression.eval env.toEnvironment input.g[i] =
-          Expression.eval env'.toEnvironment input.g[i] :=
+        Expression.eval env.toEnvironment ig[i] =
+          Expression.eval env'.toEnvironment ig[i] :=
       h_input.2.2 _ (by simp)
     simp [hg, he, hf]
   · intro _

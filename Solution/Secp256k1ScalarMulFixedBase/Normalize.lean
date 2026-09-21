@@ -26,6 +26,20 @@ Range-check every limb of a `BigInt m` to `B` bits, establishing `Normalized`.
 
 namespace Normalize
 
+/-- The number of witnesses `Gadgets.ToBits.rangeCheck` allocates. Stated as a
+separate lemma because the projection no longer reduces on the unfolded
+`FormalAssertion` constructor. -/
+lemma rangeCheck_localLength {n : ℕ} (hn : 2 ^ n < p) [Fact (p > 2)]
+    (x : Var field (F p)) : (Gadgets.ToBits.rangeCheck n hn).localLength x = n := rfl
+
+/-- `Gadgets.ToBits.rangeCheck` guarantees no channels. -/
+lemma rangeCheck_channelsWithGuarantees {n : ℕ} (hn : 2 ^ n < p) [Fact (p > 2)] :
+    (Gadgets.ToBits.rangeCheck n hn).channelsWithGuarantees = [] := rfl
+
+/-- `Gadgets.ToBits.rangeCheck` imposes no channel requirements. -/
+lemma rangeCheck_channelsWithRequirements {n : ℕ} (hn : 2 ^ n < p) [Fact (p > 2)] :
+    (Gadgets.ToBits.rangeCheck n hn).channelsWithRequirements = [] := rfl
+
 /-- The `main` circuit of `Normalize`: range-check every limb of the big integer
 `x` to `B` bits, reusing `Gadgets.ToBits.rangeCheck B hB` (a per-limb
 bit-decomposition range check) as a subcircuit on each limb. -/
@@ -38,12 +52,13 @@ instance elaborated (P : BigIntParams p m) [Fact (p > 2)] :
   localLength _ := m * P.B
   localLength_eq := by
     intro input offset
-    simp only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp only [main, circuit_norm, rangeCheck_localLength]
   subcircuitsConsistent := by
     intro input offset
-    simp +arith only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp +arith only [main, circuit_norm]
   channelsLawful := by
-    simp only [main, circuit_norm, Gadgets.ToBits.rangeCheck]
+    simp only [main, circuit_norm, rangeCheck_channelsWithGuarantees, List.ofFn_const,
+      List.flatten_replicate_nil, List.Subset.refl]
 
 /-- No preconditions: any big integer can be range-checked. -/
 def Assumptions (_ : BigInt m (F p)) : Prop := True

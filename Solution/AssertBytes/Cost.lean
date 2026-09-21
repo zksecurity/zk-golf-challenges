@@ -1,6 +1,7 @@
 import Clean.Utils.Bits
 import Clean.Circuit.Loops
 import Challenge.Utils.CostR1CS
+import Challenge.Utils.WitgenIR
 import Solution.AssertBytes.Num2Bits
 import Challenge.Instances.AssertBytes.Interface
 
@@ -12,12 +13,12 @@ building block of `AssertBytes.main`: the per-element `Num2Bits 8` byte range
 check, proved with the compositional lemmas in `Challenge.CostR1CS` (no
 `native_decide`, no large `decide`).
 
-`Num2Bits.main` inlines its constraints directly (`witnessVector`, a booleanity
+`Num2Bits.main` inlines its constraints directly (`Circuit.witnessVector`, a booleanity
 `forEach`, and a recomposition `assertZero`), so its cost / R1CS certificate is a
 straight structural recursion over that `do`-block — no subcircuit nesting. The
 only extra ingredient is an index-aware `forEach` R1CS combinator: the generic
 `IsR1CSCirc.forEach` quantifies over *all* element values, too weak for the
-booleanity rows that need each bit (a `witnessVector` cell) to be affine.
+booleanity rows that need each bit (a `Circuit.witnessVector` cell) to be affine.
 -/
 
 namespace Solution.AssertBytes
@@ -25,6 +26,7 @@ namespace Cost
 
 open Challenge.Instances.AssertBytes.Interface
 open Challenge.CostR1CS
+open Challenge.WitgenIR
 open Utils.Bits
 
 /-- A `forEach` is single-row R1CS when each *indexed* body is, so the certificate
@@ -81,6 +83,14 @@ theorem isR1CS_num2Bits (n : ℕ) (x : Expression (F circomPrime)) (hx : Affine 
       (affine_fieldFromBitsExpr ((Circuit.witnessVector n _).output w)
         (affineW_witnessVector_output n _ w)))
 
+/-- `Num2Bits.main n x` generates its only witness (the bit vector) through the
+witness IR. -/
+theorem usesIR_num2Bits (n : ℕ) (x : Expression (F circomPrime)) :
+    UsesIRCirc (Num2Bits.main n x) := by
+  unfold Num2Bits.main
+  exact UsesIRCirc.bind (UsesIRCirc.witnessVector n _) fun _ =>
+    UsesIRCirc.bind (UsesIRCirc.forEach fun _ _ => trivial) fun _ => UsesIRCirc.assertZero _
+
 /-- The `Num2Bits n` assertion invoked on `x` costs `⟨n, n+1⟩`. -/
 theorem costIs_assertion_num2Bits (n : ℕ) (x : Expression (F circomPrime)) :
     CostIs (assertion (Num2Bits.circuit n) x) ⟨n, n + 1⟩ :=
@@ -89,6 +99,10 @@ theorem costIs_assertion_num2Bits (n : ℕ) (x : Expression (F circomPrime)) :
 theorem isR1CS_assertion_num2Bits (n : ℕ) (x : Expression (F circomPrime)) (hx : Affine x) :
     IsR1CSCirc (assertion (Num2Bits.circuit n) x) :=
   IsR1CSCirc.assertion (fun m => isR1CS_num2Bits n x hx m)
+
+theorem usesIR_assertion_num2Bits (n : ℕ) (x : Expression (F circomPrime)) :
+    UsesIRCirc (assertion (Num2Bits.circuit n) x) :=
+  UsesIRCirc.assertion (fun m => usesIR_num2Bits n x m)
 
 end Cost
 end Solution.AssertBytes

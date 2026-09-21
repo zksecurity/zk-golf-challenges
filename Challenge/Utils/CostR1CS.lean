@@ -95,7 +95,7 @@ def flatOperationsIsR1CS : List (FlatOperation F) → Prop
 subcircuit is certified by `flatOperationsIsR1CS` on its flattened body. By
 `operationsIsR1CS_iff_toFlat` this is exactly `flatOperationsIsR1CS` on the
 fully flattened operations. -/
-def operationsIsR1CS [Field F] : Operations F → Prop
+def operationsIsR1CS [FiniteField F] : Operations F → Prop
   | [] => True
   | .witness _ _ :: ops => operationsIsR1CS ops
   | .assert e :: ops => isR1CSRow e ∧ operationsIsR1CS ops
@@ -104,7 +104,7 @@ def operationsIsR1CS [Field F] : Operations F → Prop
   | .subcircuit s :: ops => flatOperationsIsR1CS s.ops.toFlat ∧ operationsIsR1CS ops
 
 /-- A circuit is single-row R1CS iff its operations (at offset 0) are. -/
-def isR1CSCircuit {α : Type} [Field F] (c : Circuit F α) (offset : ℕ := 0) : Prop :=
+def isR1CSCircuit {α : Type} [FiniteField F] (c : Circuit F α) (offset : ℕ := 0) : Prop :=
   operationsIsR1CS (Circuit.operations c offset)
 
 /-! ## Counting allocations and constraints (assuming R1CS form) -/
@@ -178,7 +178,7 @@ mutual
     | op :: ops => nestedCount op + nestedListCount ops
 end
 
-def operationCount [Field F] : Operations F → Count
+def operationCount [FiniteField F] : Operations F → Count
   | [] => Count.zero
   | .witness m c :: ops => flatOperationCount (.witness m c) + operationCount ops
   | .assert e :: ops => flatOperationCount (.assert e) + operationCount ops
@@ -187,7 +187,7 @@ def operationCount [Field F] : Operations F → Count
   | .subcircuit s :: ops => nestedCount s.ops + operationCount ops
 
 /-- Allocations and constraints of a circuit, assuming R1CS form. -/
-def circuitCount {α : Type} [Field F] (c : Circuit F α) (n : ℕ := 0) : Count :=
+def circuitCount {α : Type} [FiniteField F] (c : Circuit F α) (n : ℕ := 0) : Count :=
   operationCount (Circuit.operations c n)
 
 /-! ## Structural lemmas -/
@@ -199,7 +199,7 @@ namespace Lemmas
 @[simp] theorem flatOperationsIsR1CS_nil :
     flatOperationsIsR1CS ([] : List (FlatOperation F)) = True := rfl
 
-@[simp] theorem operationsIsR1CS_nil [Field F] :
+@[simp] theorem operationsIsR1CS_nil [FiniteField F] :
     operationsIsR1CS ([] : Operations F) = True := rfl
 
 theorem flatOperationsIsR1CS_append (ops₁ ops₂ : List (FlatOperation F)) :
@@ -210,7 +210,7 @@ theorem flatOperationsIsR1CS_append (ops₁ ops₂ : List (FlatOperation F)) :
   | cons op ops ih =>
       cases op <;> simp [flatOperationsIsR1CS, ih, and_assoc]
 
-theorem operationsIsR1CS_append [Field F] (ops₁ ops₂ : Operations F) :
+theorem operationsIsR1CS_append [FiniteField F] (ops₁ ops₂ : Operations F) :
     operationsIsR1CS (ops₁ ++ ops₂) ↔
       operationsIsR1CS ops₁ ∧ operationsIsR1CS ops₂ := by
   induction ops₁ with
@@ -221,7 +221,7 @@ theorem operationsIsR1CS_append [Field F] (ops₁ ops₂ : Operations F) :
 /-- The nested certificate equals the flat certificate on the flattened
 operations: `toFlat` already inlines every subcircuit, and
 `flatOperationsIsR1CS` checks exactly the same asserts. -/
-theorem operationsIsR1CS_iff_toFlat [Field F] (ops : Operations F) :
+theorem operationsIsR1CS_iff_toFlat [FiniteField F] (ops : Operations F) :
     operationsIsR1CS ops ↔ flatOperationsIsR1CS ops.toFlat := by
   induction ops with
   | nil => simp [operationsIsR1CS, Operations.toFlat]
@@ -232,7 +232,7 @@ theorem operationsIsR1CS_iff_toFlat [Field F] (ops : Operations F) :
 
 /-! ### Count traversal -/
 
-theorem operationCount_append [Field F] (a b : Operations F) :
+theorem operationCount_append [FiniteField F] (a b : Operations F) :
     operationCount (a ++ b) = operationCount a + operationCount b := by
   induction a using Operations.induct with
   | empty => simp only [List.nil_append, operationCount]; rw [Count.zero_add]
@@ -247,7 +247,7 @@ theorem nestedListCount_append (xs ys : List (NestedOperations F)) :
   | cons x xs ih =>
       simp [nestedListCount, ih, Count.add_assoc]
 
-theorem operationCount_toNested [Field F] (ops : Operations F) :
+theorem operationCount_toNested [FiniteField F] (ops : Operations F) :
     nestedListCount ops.toNested = operationCount ops := by
   induction ops using Operations.induct with
   | empty =>
@@ -278,7 +278,7 @@ the whole operation forest. -/
 
 open Lemmas
 
-variable [Field F] {α β : Type}
+variable [FiniteField F] {α β : Type}
 
 /-! ### `CostIs`: offset-independent operation count -/
 
@@ -321,17 +321,41 @@ theorem CostIs.map {f : Circuit F α} {g : α → β} {K : Count} (hf : CostIs f
     CostIs (g <$> f) K := by
   intro n; rw [Circuit.map_operations_eq]; exact hf n
 
-theorem CostIs.witnessVector (m : ℕ) (c : ProverEnvironment F → Vector F m) :
-    CostIs (Circuit.witnessVector m c) ⟨m, 0⟩ := by
+theorem CostIs.witnessVector (m : ℕ) (out : Witgen.VExpr F m) :
+    CostIs (Circuit.witnessVector m out) ⟨m, 0⟩ := by
   intro n; rfl
 
-theorem CostIs.witnessVar (c : ProverEnvironment F → F) :
-    CostIs (Circuit.witnessVar c) ⟨1, 0⟩ := by
+/-- Closure-computed vector witness (the witness-IR escape hatch). -/
+theorem CostIs.witnessVectorNative (m : ℕ) (c : ProverEnvironment F → Vector F m) :
+    CostIs (witnessVectorNative m c) ⟨m, 0⟩ := by
   intro n; rfl
 
-theorem CostIs.witnessField (c : ProverEnvironment F → F) :
-    CostIs (Circuit.witnessField c) ⟨1, 0⟩ :=
-  CostIs.bind (CostIs.witnessVar c) (fun _ => CostIs.pure _)
+theorem CostIs.witnessVar (ir : WitgenIR F 1) :
+    CostIs (Circuit.witnessVar ir) ⟨1, 0⟩ := by
+  intro n; rfl
+
+theorem CostIs.witnessField (e : Witgen.FExpr F) :
+    CostIs (Circuit.witnessField e) ⟨1, 0⟩ := by
+  intro n; rfl
+
+/-- Raw witness-IR allocation of a provable value: `size M` cells, no constraints.
+`witnessNative`/`witnessProgram` on the generic `Witnessable F M (Var M)` instance
+reduce to this definitionally. -/
+theorem CostIs.witnessIR (M : TypeMap) [ProvableType M] (ir : WitgenIR F (size M)) :
+    CostIs (witnessIR M ir) ⟨size M, 0⟩ := by
+  intro n; rfl
+
+/-- Closure-computed witness of a provable value. -/
+theorem CostIs.witnessNative {M : TypeMap} [ProvableType M]
+    (c : ProverEnvironment F → M F) :
+    CostIs (witnessNative (var := Var M) c) ⟨size M, 0⟩ := by
+  intro n; rfl
+
+/-- Closure-computed scalar witness (the replacement for the old closure-based
+`Circuit.witnessField`). -/
+theorem CostIs.witnessFieldNative (c : ProverEnvironment F → F) :
+    CostIs (_root_.witnessNative (value := field) (var := Expression) c) ⟨1, 0⟩ := by
+  intro n; rfl
 
 theorem CostIs.assertZero (e : Expression F) : CostIs (Circuit.assertZero e) ⟨0, 1⟩ := by
   intro n; rfl
@@ -429,17 +453,34 @@ theorem IsR1CSCirc.map {f : Circuit F α} {g : α → β} (hf : IsR1CSCirc f) :
     IsR1CSCirc (g <$> f) := by
   intro n; rw [Circuit.map_operations_eq]; exact hf n
 
-theorem IsR1CSCirc.witnessVector (m : ℕ) (c : ProverEnvironment F → Vector F m) :
-    IsR1CSCirc (Circuit.witnessVector m c) := by
+theorem IsR1CSCirc.witnessVector (m : ℕ) (out : Witgen.VExpr F m) :
+    IsR1CSCirc (Circuit.witnessVector m out) := by
   intro n; trivial
 
-theorem IsR1CSCirc.witnessVar (c : ProverEnvironment F → F) :
-    IsR1CSCirc (Circuit.witnessVar c) := by
+theorem IsR1CSCirc.witnessVectorNative (m : ℕ) (c : ProverEnvironment F → Vector F m) :
+    IsR1CSCirc (witnessVectorNative m c) := by
   intro n; trivial
 
-theorem IsR1CSCirc.witnessField (c : ProverEnvironment F → F) :
-    IsR1CSCirc (Circuit.witnessField c) :=
-  IsR1CSCirc.bind (IsR1CSCirc.witnessVar c) (fun _ => IsR1CSCirc.pure _)
+theorem IsR1CSCirc.witnessVar (ir : WitgenIR F 1) :
+    IsR1CSCirc (Circuit.witnessVar ir) := by
+  intro n; trivial
+
+theorem IsR1CSCirc.witnessField (e : Witgen.FExpr F) :
+    IsR1CSCirc (Circuit.witnessField e) := by
+  intro n; trivial
+
+theorem IsR1CSCirc.witnessIR (M : TypeMap) [ProvableType M] (ir : WitgenIR F (size M)) :
+    IsR1CSCirc (witnessIR M ir) := by
+  intro n; trivial
+
+theorem IsR1CSCirc.witnessNative {M : TypeMap} [ProvableType M]
+    (c : ProverEnvironment F → M F) :
+    IsR1CSCirc (witnessNative (var := Var M) c) := by
+  intro n; trivial
+
+theorem IsR1CSCirc.witnessFieldNative (c : ProverEnvironment F → F) :
+    IsR1CSCirc (_root_.witnessNative (value := field) (var := Expression) c) := by
+  intro n; trivial
 
 theorem IsR1CSCirc.assertZero {e : Expression F} (h : isR1CSRow e) :
     IsR1CSCirc (Circuit.assertZero e) := by
@@ -559,14 +600,14 @@ field-scaled combinations of them — are affine, and affineness propagates thro
 `isR1CSRow e` hypothesis that `IsR1CSCirc.assertZero` consumes. These are the
 reusable leaves used to discharge the per-assert obligations of any gadget. -/
 
-omit [Field F] in
+omit [FiniteField F] in
 @[simp] theorem degree_var (v : Variable F) : degree (Expression.var v) = 1 := rfl
-omit [Field F] in
+omit [FiniteField F] in
 @[simp] theorem degree_const (c : F) : degree (Expression.const c) = 0 := rfl
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem degree_add (a b : Expression F) : degree (a + b) = max (degree a) (degree b) := rfl
-omit [Field F] in
+omit [FiniteField F] in
 theorem degree_mul (a b : Expression F) : degree (a * b) = degree a + degree b := rfl
 
 theorem degree_neg (a : Expression F) : degree (-a) = degree a := by
@@ -577,42 +618,42 @@ theorem degree_sub (a b : Expression F) : degree (a - b) = max (degree a) (degre
   show degree (a + -b) = _
   rw [degree_add, degree_neg]
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem degree_fconst_mul (c : F) (a : Expression F) : degree (c * a) = degree a := by
   show degree (Expression.mul (Expression.const c) a) = degree a
   simp only [degree, Nat.zero_add]
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem degree_mul_fconst (a : Expression F) (c : F) : degree (a * c) = degree a := by
   show degree (Expression.mul a (Expression.const c)) = degree a
   simp only [degree, Nat.add_zero]
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem Affine.const (c : F) : Affine (Expression.const c) := by simp [Affine]
-omit [Field F] in
+omit [FiniteField F] in
 theorem Affine.var (v : Variable F) : Affine (Expression.var v) := by simp [Affine]
-omit [Field F] in
+omit [FiniteField F] in
 theorem Affine.add {a b : Expression F} (ha : Affine a) (hb : Affine b) : Affine (a + b) := by
   simp only [Affine, degree_add, Nat.max_le]; exact ⟨ha, hb⟩
 theorem Affine.neg {a : Expression F} (ha : Affine a) : Affine (-a) := by
   simp only [Affine, degree_neg]; exact ha
 theorem Affine.sub {a b : Expression F} (ha : Affine a) (hb : Affine b) : Affine (a - b) := by
   simp only [Affine, degree_sub, Nat.max_le]; exact ⟨ha, hb⟩
-omit [Field F] in
+omit [FiniteField F] in
 theorem Affine.fconst_mul (c : F) {a : Expression F} (ha : Affine a) : Affine (c * a) := by
   simp only [Affine, degree_fconst_mul]; exact ha
-omit [Field F] in
+omit [FiniteField F] in
 theorem Affine.mul_fconst {a : Expression F} (c : F) (ha : Affine a) : Affine (a * c) := by
   simp only [Affine, degree_mul_fconst]; exact ha
 theorem Affine.zero : Affine (0 : Expression F) := by
   show degree (Expression.const 0) ≤ 1; simp
-omit [Field F] in
+omit [FiniteField F] in
 /-- A degree-≤1 form times a degree-0 (constant) form is affine. -/
 theorem Affine.mul_deg0 {a b : Expression F} (ha : Affine a) (hb : degree b = 0) :
     Affine (a * b) := by
   simp only [Affine, degree_mul, hb, Nat.add_zero]; exact ha
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- Affineness is preserved by a `Fin.foldl` that adds an affine increment each step. -/
 theorem affine_finFoldl (m : ℕ) :
     ∀ (step : Expression F → ℕ → Expression F) (init : Expression F),
@@ -626,21 +667,20 @@ theorem affine_finFoldl (m : ℕ) :
       exact ih (fun acc j => step acc (j + 1)) (step init 0) (hstep init 0 hinit)
         (fun acc i h => hstep acc (i + 1) h)
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- `Fin`-indexed version (the loop body may use the index's bound). -/
 theorem affine_finFoldl' {m : ℕ} (step : Expression F → Fin m → Expression F) (init : Expression F)
     (hinit : Affine init) (hstep : ∀ acc i, Affine acc → Affine (step acc i)) :
     Affine (Fin.foldl m step init) := by
   have key := affine_finFoldl m (fun acc j => if h : j < m then step acc ⟨j, h⟩ else acc) init hinit
-    (fun acc i h => by dsimp only; split
+    (fun acc i h => by split
                        · exact hstep acc _ h
                        · exact h)
   convert key using 2
   funext acc i
-  dsimp only
   rw [dif_pos i.isLt]
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- An affine expression carries no degree-2 products. -/
 theorem r1csProducts_of_affine {e : Expression F} (h : Affine e) : r1csProducts e = some 0 := by
   induction e with
@@ -657,7 +697,7 @@ theorem r1csProducts_of_affine {e : Expression F} (h : Affine e) : r1csProducts 
       · have hb0 : degree b = 0 := by omega
         rw [if_neg (by omega), if_pos hb0]; exact iha (by simp only [Affine]; omega)
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem r1csProducts_add (a b : Expression F) :
     r1csProducts (a + b) =
       (match r1csProducts a, r1csProducts b with
@@ -665,7 +705,7 @@ theorem r1csProducts_add (a b : Expression F) :
 
 theorem r1csProducts_neg (a : Expression F) : r1csProducts (-a) = r1csProducts a := rfl
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- The product of two affine forms is a single rank-1 row term. -/
 theorem r1csProducts_mul_affine {a b : Expression F} (ha : Affine a) (hb : Affine b) :
     r1csProducts (a * b) = some 0 ∨ r1csProducts (a * b) = some 1 := by
@@ -677,13 +717,13 @@ theorem r1csProducts_mul_affine {a b : Expression F} (ha : Affine a) (hb : Affin
     · left; rw [if_neg ha0, if_pos hb0]; exact r1csProducts_of_affine ha
     · right; rw [if_neg ha0, if_neg hb0, if_pos ⟨ha, hb⟩]
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- Reduce an `isR1CSRow` goal to a bound on the product count. -/
 theorem isR1CSRow_of_r1csProducts {e : Expression F} {k : ℕ}
     (h : r1csProducts e = some k) (hk : k ≤ 1) : isR1CSRow e := by
   unfold isR1CSRow; rw [h]; exact hk
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem isR1CSRow_of_affine {e : Expression F} (h : Affine e) : isR1CSRow e :=
   isR1CSRow_of_r1csProducts (r1csProducts_of_affine h) (by omega)
 
@@ -698,7 +738,7 @@ theorem isR1CSRow_sub_mul {C A B : Expression F}
       (by show r1csProducts (C + -(A * B)) = some 1
           rw [r1csProducts_add, r1csProducts_neg, r1csProducts_of_affine hC, h]) (by omega)
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- `C + A*B` with all of `A, B, C` affine is a single R1CS row. -/
 theorem isR1CSRow_add_mul {C A B : Expression F}
     (hC : Affine C) (hA : Affine A) (hB : Affine B) : isR1CSRow (C + A * B) := by
@@ -708,7 +748,7 @@ theorem isR1CSRow_add_mul {C A B : Expression F}
   · exact isR1CSRow_of_r1csProducts (k := 1)
       (by rw [r1csProducts_add, r1csProducts_of_affine hC, h]) (by omega)
 
-omit [Field F] in
+omit [FiniteField F] in
 /-- A bare product `A*B` of two affine forms is a single R1CS row (`A·B = 0`). -/
 theorem isR1CSRow_mul {A B : Expression F} (hA : Affine A) (hB : Affine B) :
     isR1CSRow (A * B) := by
@@ -750,19 +790,19 @@ theorem isR1CS_of_IsR1CSCirc {Input Output : TypeMap} [ProvableType Input]
 witness rows and symbolic inputs of arithmetic circuits satisfy this. -/
 def AffineW {m : ℕ} (v : Var (fields m) F) : Prop := ∀ i (hi : i < m), Affine v[i]
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem AffineProvable.affineW {m : ℕ} {v : Var (fields m) F} (h : AffineProvable v) :
     AffineW v := by
   intro i hi
   simpa [AffineProvable, circuit_norm, explicit_provable_type] using h i hi
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem AffineW.affineProvable {m : ℕ} {v : Var (fields m) F} (h : AffineW v) :
     AffineProvable v := by
   intro i hi
   simpa [AffineProvable, circuit_norm, explicit_provable_type] using h i hi
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem affineProvable_unit (u : Var unit F) : AffineProvable u := by
   intro i hi
   have hsz : size unit = 0 := rfl
@@ -776,7 +816,7 @@ theorem affineOutput_of_affineW {m : ℕ} {c : Circuit F (Var (fields m) F)}
     (h : ∀ n, AffineW (c.output n)) : AffineOutput c :=
   fun n => (h n).affineProvable
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem AffineW.left_of_append {m n : ℕ}
     {a : fields m (Expression F)} {b : fields n (Expression F)}
     (h : AffineW (a ++ b : fields (m + n) (Expression F))) : AffineW a := by
@@ -787,7 +827,7 @@ theorem AffineW.left_of_append {m n : ℕ}
   · exact h'
   · omega
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem AffineW.right_of_append {m n : ℕ}
     {a : fields m (Expression F)} {b : fields n (Expression F)}
     (h : AffineW (a ++ b : fields (m + n) (Expression F))) : AffineW b := by
@@ -801,28 +841,34 @@ theorem AffineW.right_of_append {m n : ℕ}
 /-- Every entry of a `fields m` variable vector is a *constant* (degree 0). -/
 def ConstW {m : ℕ} (v : Var (fields m) F) : Prop := ∀ i (hi : i < m), degree v[i] = 0
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem ConstW.affineW {m : ℕ} {v : Var (fields m) F} (h : ConstW v) : AffineW v := by
   intro i hi; have := h i hi; simp only [Affine]; omega
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem affine_varFromOffset (m n i : ℕ) (hi : i < m) :
     Affine ((varFromOffset (fields m) n : Var (fields m) F)[i]) := by
-  rw [show (varFromOffset (fields m) n : Var (fields m) F)[i] = Expression.var ⟨n + i⟩ from by
-    simp only [varFromOffset, instProvableTypeFields, size, Vector.getElem_mapRange]]
+  rw [show (varFromOffset (fields m) n : Var (fields m) F)
+        = Vector.mapRange m (fun i => Expression.var ⟨n + i⟩) from rfl,
+    Vector.getElem_mapRange]
   exact Affine.var _
 
-/-- The fresh witness vector produced by `witnessVector m c` is affine at every offset. -/
-theorem affineW_witnessVector_output (m : ℕ) (c : ProverEnvironment F → Vector F m) (n : ℕ) :
-    AffineW ((Circuit.witnessVector m c).output n) :=
+/-- The fresh witness vector produced by `witnessVector m out` is affine at every offset. -/
+theorem affineW_witnessVector_output (m : ℕ) (out : Witgen.VExpr F m) (n : ℕ) :
+    AffineW ((Circuit.witnessVector m out).output n) :=
   fun i hi => affine_varFromOffset m n i hi
 
-omit [Field F] in
+/-- Same, for the closure-computed (`native`) vector witness. -/
+theorem affineW_witnessVectorNative_output (m : ℕ) (c : ProverEnvironment F → Vector F m)
+    (n : ℕ) : AffineW ((witnessVectorNative m c).output n) :=
+  fun i hi => affine_varFromOffset m n i hi
+
+omit [FiniteField F] in
 theorem affineW_varFromOffset (m n : ℕ) :
     AffineW (varFromOffset (fields m) n : Var (fields m) F) :=
   fun i hi => affine_varFromOffset m n i hi
 
-omit [Field F] in
+omit [FiniteField F] in
 theorem affineProvable_varFromOffset {Input : TypeMap} [ProvableType Input] (offset : ℕ) :
     AffineProvable (varFromOffset Input offset : Var Input F) := by
   intro i hi
@@ -832,10 +878,13 @@ theorem affineProvable_varFromOffset {Input : TypeMap} [ProvableType Input] (off
     simp only [varFromOffset, ProvableType.toElements_fromElements, Vector.getElem_mapRange]]
   exact Affine.var _
 
-theorem affine_witnessField_output (c : ProverEnvironment F → F) (n : ℕ) :
-    Affine ((Circuit.witnessField c).output n) := Affine.var _
+theorem affine_witnessField_output (e : Witgen.FExpr F) (n : ℕ) :
+    Affine ((Circuit.witnessField e).output n) := Affine.var _
 
-omit [Field F] in
+theorem affine_witnessFieldNative_output (c : ProverEnvironment F → F) (n : ℕ) :
+    Affine ((witnessNative (value := field) (var := Expression) c).output n) := Affine.var _
+
+omit [FiniteField F] in
 /-- A `mapRange` of bare variables is affine. -/
 theorem affineW_mapRange_var {m : ℕ} (f : ℕ → ℕ) :
     AffineW (Vector.mapRange m (fun i => Expression.var ⟨f i⟩) : Var (fields m) F) := by

@@ -6,7 +6,9 @@
         "Solution.SHA256CompressGF2Canonical.completeness",
         "Solution.SHA256CompressGF2Canonical.mainCost",
         "Solution.SHA256CompressGF2Canonical.isR1CS_Cidentity",
-        "Solution.SHA256CompressGF2Canonical.computableWitness"
+        "Solution.SHA256CompressGF2Canonical.witgenIsIR",
+        "Solution.SHA256CompressGF2Canonical.computableWitness",
+        "Solution.SHA256CompressGF2Canonical.requirementsChannelsLawful"
     ],
     "definition_names": [
         "Solution.SHA256CompressGF2Canonical.main",

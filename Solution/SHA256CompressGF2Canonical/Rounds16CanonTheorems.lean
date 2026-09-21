@@ -84,9 +84,15 @@ theorem eval_stateVar256_of_agreesBelow (r0 i₀ : ℕ) (v : Var (fields 768) (F
   | zero => intro _; exact eval_st768_congr h_input
   | succ k ih =>
     intro hkk
+    -- `omega` cannot be used on these goals: the literal 562 exceeds the constant
+    -- size it can normalize within the default `maxRecDepth`, so reassociate by hand.
+    have hsplit : (k + 1) * 562 = k * 562 + 562 := by ring
+    rw [hsplit, ← Nat.add_assoc] at hkk
+    have hk' : i₀ + k * 562 + 562 ≤ kk := hkk
+    have hk : i₀ + k * 562 ≤ kk := le_trans (Nat.le_add_right _ 562) hk'
     rw [stateVar256]
-    exact RoundCanon.eval_subOut_of_agreesBelow _ _ (i₀ + k * 562) (by omega) h_agree
-      (eval_c288s_congr (ih (by omega)) (eval_q768_congr h_input (8 + k)))
+    exact RoundCanon.eval_subOut_of_agreesBelow _ _ (i₀ + k * 562) hk' h_agree
+      (eval_c288s_congr (ih hk) (eval_q768_congr h_input (8 + k)))
 
 end Rounds16Canon
 

@@ -46,15 +46,9 @@ sum equals the evaluated subtrahend. Bridges the `assertZero` rows to
 field-level sum equations, in both proof directions. -/
 theorem eval_row_iff (env : Environment (F p)) {n : ℕ}
     (g : Fin n → Expression (F p)) (e : Expression (F p)) :
-    Expression.eval env (Fin.foldl n (fun acc i => acc + g i) 0 - e) = 0
+    Expression.eval env (Fin.foldl n (fun acc i => acc + g i) 0) - Expression.eval env e = 0
       ↔ (∑ i : Fin n, Expression.eval env (g i)) = Expression.eval env e := by
-  have hsub : Expression.eval env (Fin.foldl n (fun acc i => acc + g i) 0 - e)
-      = Expression.eval env (Fin.foldl n (fun acc i => acc + g i) 0)
-        - Expression.eval env e := by
-    show Expression.eval env (Expression.add _ (Expression.mul (Expression.const (-1)) e)) = _
-    simp only [Expression.eval]
-    ring
-  rw [hsub, sub_eq_zero, eval_foldl_add]
+  rw [sub_eq_zero, eval_foldl_add]
 
 end
 
@@ -117,7 +111,6 @@ theorem value_limb_eq (x : Emu (F circomPrime)) (hx : x.Normalized limbBits)
   rw [hstep, digit_extract 64 (fun j => if h : j < numLimbs then (x[j]'h).val else 0)
     (by
       intro j
-      dsimp only
       by_cases h : j < numLimbs
       · rw [dif_pos h]
         exact hx ⟨j, h⟩
